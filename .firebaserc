@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "accnad-8a7d3"
+  },
+  "targets": {
+    "accnad-8a7d3": {
+      "hosting": {
+        "quickaccpro": [
+          "quickaccpro"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
