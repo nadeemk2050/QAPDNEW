@@ -77,12 +77,53 @@ export async function listLedgers() {
   }
 }
 
+// Helper to resolve Contra names from account ID if missing in document fields
+function resolveContraNames(data, ledgerList) {
+  let drName = data.toAccountName || data.drName || ''
+  let crName = data.accountName || data.crName || data.fromAccountName || ''
+  
+  if ((!drName || !crName) && ledgerList && ledgerList.length > 0) {
+    const resolvedDrId = data.toAccountId || data.partyId
+    const resolvedCrId = data.fromAccountId || data.accountId
+    
+    if (!drName && resolvedDrId) {
+      drName = ledgerList.find(a => a.id === resolvedDrId)?.name || ''
+    }
+    if (!crName && resolvedCrId) {
+      crName = ledgerList.find(a => a.id === resolvedCrId)?.name || ''
+    }
+  }
+  return { drName, crName }
+}
+
+function resolveLedgerName(id, ledgerList) {
+  if (!id) return ''
+  const ledger = ledgerList.find(l => l.id === id)
+  return ledger ? ledger.name : ''
+}
+
 // ─── Transactions / Daybook ─────────────────────────────────────────────────
 
 export async function listTransactions(params = {}) {
   const companyId = getCurrentCompanyId()
   if (!companyId) return { transactions: [], total: 0 }
   try {
+    const companyDB = await getDB()
+    let ledgerList = []
+    if (companyDB?.offline_records) {
+      const ledgerDocs = await companyDB.offline_records.find({
+        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts'] } }
+      }).exec()
+      ledgerList = ledgerDocs.map(d => {
+        const r = d.toJSON()
+        const inner = r.data || {}
+        return {
+          id: r.id,
+          name: inner.name || inner.accountName || ''
+        }
+      })
+    }
+
     const collections = ['payments', 'invoices', 'journal_vouchers', 'stock_journals']
     const allTxns = []
     for (const col of collections) {
@@ -92,12 +133,49 @@ export async function listTransactions(params = {}) {
         const data = d.data()
         if (data.deleted || data.status === 'deleted') return
         const typeMap = { out: 'Payment', in: 'Receipt', contra: 'Contra', purchase: 'Purchase', sales: 'Sales', journal: 'Journal', manufacturing: 'Manufacturing', stock_journal: 'Stock Journal' }
-        const subType = data.type === 'out' ? 'payment' : data.type === 'in' ? 'receipt' : data.type === 'contra' ? 'contra' : data.type || ''
+        const typeLower = (data.type || '').toLowerCase()
+        const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
+        
+        let drName = data.drName || ''
+        let crName = data.crName || ''
+        if (col === 'payments') {
+          if (subType === 'payment') {
+            drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+            if (!drName) {
+              const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+              drName = resolveLedgerName(firstPaymentId, ledgerList)
+            }
+            crName = data.crName || data.accountName || ''
+            if (!crName) {
+              crName = resolveLedgerName(data.accountId, ledgerList)
+            }
+          } else if (subType === 'receipt') {
+            drName = data.drName || data.accountName || ''
+            if (!drName) {
+              drName = resolveLedgerName(data.accountId, ledgerList)
+            }
+            crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+            if (!crName) {
+              const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+              crName = resolveLedgerName(firstPaymentId, ledgerList)
+            }
+          } else if (subType === 'contra') {
+            drName = data.drName || data.toAccountName || ''
+            crName = data.crName || data.accountName || data.fromAccountName || ''
+            if (!drName || !crName) {
+              const resolved = resolveContraNames(data, ledgerList)
+              drName = drName || resolved.drName
+              crName = crName || resolved.crName
+            }
+            console.log('[QAPD] listTransactions Contra resolved data:', { drName, crName, data })
+          }
+        }
+
         allTxns.push({
           id: d.id,
           refNo: data.refNo || '',
           date: data.date || '',
-          type: data.type || '',
+          type: col,
           subType,
           voucherType: typeMap[data.type] || col,
           collection: col,
@@ -105,8 +183,8 @@ export async function listTransactions(params = {}) {
           narration: data.narration || data.description || '',
           accountName: data.accountName || '',
           partyName: data.partyName || (data.payments?.[0]?.ledgerName) || '',
-          drName: data.type === 'out' ? (data.payments?.[0]?.ledgerName || data.partyName || '') : '',
-          crName: data.type === 'out' ? (data.accountName || '') : '',
+          drName,
+          crName,
           syncTimestamp: data.lastModifiedAt?.seconds ? data.lastModifiedAt.seconds * 1000 : Date.now(),
           status: data.status || 'active'
         })
@@ -264,6 +342,22 @@ export async function getAccountLedger(accountId, params = {}) {
   const companyId = getCurrentCompanyId()
   if (!companyId) return { transactions: [], total: 0 }
   try {
+    const companyDB = await getDB()
+    let ledgerList = []
+    if (companyDB?.offline_records) {
+      const ledgerDocs = await companyDB.offline_records.find({
+        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts'] } }
+      }).exec()
+      ledgerList = ledgerDocs.map(d => {
+        const r = d.toJSON()
+        const inner = r.data || {}
+        return {
+          id: r.id,
+          name: inner.name || inner.accountName || ''
+        }
+      })
+    }
+
     const allTxns = []
     const collections = ['payments', 'invoices', 'journal_vouchers', 'stock_journals']
     for (const col of collections) {
@@ -272,16 +366,68 @@ export async function getAccountLedger(accountId, params = {}) {
       snap.docs.forEach(d => {
         const data = d.data()
         if (data.deleted || data.status === 'deleted') return
-        // Match if accountId or partyId matches
-        if (data.accountId === accountId || data.partyId === accountId || data.id === accountId) {
+        
+        const accLower = (accountId || '').trim().toLowerCase()
+        const isMatch = data.accountId === accountId || 
+                        data.partyId === accountId || 
+                        data.id === accountId || 
+                        data.toAccountId === accountId ||
+                        (data.accountName || '').trim().toLowerCase() === accLower ||
+                        (data.partyName || '').trim().toLowerCase() === accLower ||
+                        (data.toAccountName || '').trim().toLowerCase() === accLower;
+
+        // Match if accountId, partyId, or name matches
+        if (isMatch) {
+          const typeLower = (data.type || '').toLowerCase()
+          const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
+          
+          let drName = data.drName || ''
+          let crName = data.crName || ''
+          if (col === 'payments') {
+            if (subType === 'payment') {
+              drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+              if (!drName) {
+                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                drName = resolveLedgerName(firstPaymentId, ledgerList)
+              }
+              crName = data.crName || data.accountName || ''
+              if (!crName) {
+                crName = resolveLedgerName(data.accountId, ledgerList)
+              }
+            } else if (subType === 'receipt') {
+              drName = data.drName || data.accountName || ''
+              if (!drName) {
+                drName = resolveLedgerName(data.accountId, ledgerList)
+              }
+              crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+              if (!crName) {
+                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                crName = resolveLedgerName(firstPaymentId, ledgerList)
+              }
+            } else if (subType === 'contra') {
+              drName = data.drName || data.toAccountName || ''
+              crName = data.crName || data.accountName || data.fromAccountName || ''
+              if (!drName || !crName) {
+                const resolved = resolveContraNames(data, ledgerList)
+                drName = drName || resolved.drName
+                crName = crName || resolved.crName
+              }
+              console.log('[QAPD] getAccountLedger Contra resolved data:', { drName, crName, data })
+            }
+          }
+
           allTxns.push({
             id: d.id,
             refNo: data.refNo || '',
             date: data.date || '',
-            type: data.type || '',
+            type: col,
+            subType,
             amount: Number(data.totalAmount || data.amount || 0),
             narration: data.narration || data.description || '',
+            accountName: data.accountName || '',
             partyName: data.partyName || (data.payments?.[0]?.ledgerName) || '',
+            drName,
+            crName,
             collection: col
           })
         }
@@ -306,8 +452,14 @@ export async function listContra(params = {}) {
         id: d.id,
         refNo: data.refNo || '',
         date: data.date || '',
+        type: 'payments',
+        subType: 'contra',
         amount: Number(data.totalAmount || data.amount || 0),
         narration: data.narration || '',
+        accountName: data.accountName || '',
+        toAccountName: data.toAccountName || '',
+        drName: data.toAccountName || '',
+        crName: data.accountName || '',
         fromAccount: data.accountId || '',
         toAccount: data.toAccountId || '',
         collection: 'payments'

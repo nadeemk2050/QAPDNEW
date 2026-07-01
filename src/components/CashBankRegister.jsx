@@ -1,8 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Building2, Search, ArrowLeft, RefreshCw, Wallet2, Clock, ArrowUpDown } from 'lucide-react'
-import { listAccounts } from '../api'
+import { Building2, Search, ArrowLeft, ArrowRight, RefreshCw, Wallet2, Clock, ArrowUpDown } from 'lucide-react'
+import { listAccounts, getAccountLedger } from '../api'
 import { getCurrentCompanyId, getDB } from '../localDB'
+
+const getDaysAgoStr = (days) => {
+  const d = new Date()
+  d.setDate(d.getDate() - days)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export default function CashBankRegister() {
   const navigate = useNavigate()
@@ -50,43 +59,55 @@ export default function CashBankRegister() {
     setLedgerTxns([])
 
     try {
-      const companyId = getCurrentCompanyId()
-      if (!companyId) return
+      const data = await getAccountLedger(acc.id)
+      const allTxns = data.transactions || []
 
-      const companyDB = await getDB()
-      if (!companyDB?.offline_records) return
+      const tenDaysAgo = getDaysAgoStr(10)
 
-      // Directly query local RxDB for all payment vouchers involving this account
-      const allPayments = await companyDB.offline_records.find({
-        selector: { collectionName: 'payments' }
-      }).exec()
-
-      const txns = allPayments
-        .map(d => d.toJSON())
-        .filter(d => {
-          const data = d.data || {}
-          if (data.deleted || data.status === 'deleted') return false
-          // Match by accountId or accountName
-          return data.accountId === acc.id || 
-                 (data.accountName || '').toLowerCase() === (acc.name || '').toLowerCase() ||
-                 data.toAccountId === acc.id ||
-                 (data.toAccountName || '').toLowerCase() === (acc.name || '').toLowerCase()
+      const txns = allTxns
+        .filter(t => {
+          // Filter by last 10 days
+          if (!t.date || t.date < tenDaysAgo) return false
+          return true
         })
-        .map(d => {
-          const data = d.data || {}
-          const typeLabel = data.type === 'out' ? 'Payment' : data.type === 'in' ? 'Receipt' : data.type === 'contra' ? 'Contra' : data.type || 'Unknown'
+        .map(t => {
+          const typeLabel = t.subType === 'payment' || t.subType === 'out' ? 'Payment' : 
+                            t.subType === 'receipt' || t.subType === 'in' ? 'Receipt' : 
+                            t.subType === 'contra' ? 'Contra' : t.voucherType || 'Unknown'
+          
+          let debit = 0
+          let credit = 0
+          
+          const typeLower = (t.subType || '').toLowerCase()
+          if (typeLower === 'receipt' || typeLower === 'in') {
+            debit = t.amount
+          } else if (typeLower === 'payment' || typeLower === 'out') {
+            credit = t.amount
+          } else if (typeLower === 'contra') {
+            const isDr = (t.drName || '').trim().toLowerCase() === (acc.name || '').trim().toLowerCase()
+            if (isDr) {
+              debit = t.amount
+            } else {
+              credit = t.amount
+            }
+          }
+
           return {
-            id: d.id,
-            date: data.date || '',
-            refNo: data.refNo || '',
+            id: t.id,
+            date: t.date || '',
+            refNo: t.refNo || '',
             type: typeLabel,
-            subType: data.type || '',
-            amount: Number(data.totalAmount || data.amount || 0),
-            narration: data.narration || '',
-            partyName: data.partyName || (data.payments?.[0]?.ledgerName) || ''
+            subType: t.subType || '',
+            amount: t.amount,
+            narration: t.narration || '',
+            partyName: t.partyName || '',
+            drName: t.drName || '',
+            crName: t.crName || '',
+            accountName: t.accountName || '',
+            debit,
+            credit
           }
         })
-        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
 
       setLedgerTxns(txns)
     } catch (e) {
@@ -132,7 +153,7 @@ export default function CashBankRegister() {
             </button>
             <div>
               <h2 className="text-lg font-bold text-slate-800 uppercase">{selectedAccount.name}</h2>
-              <p className="text-xs text-slate-500">Account Ledger — {ledgerTxns.length} transactions</p>
+              <p className="text-xs text-slate-500">Account Ledger — Last 10 days · {ledgerTxns.length} transactions</p>
             </div>
           </div>
           <button onClick={() => openAccountLedger(selectedAccount)} className="btn-secondary text-xs" disabled={ledgerLoading}>
@@ -149,11 +170,11 @@ export default function CashBankRegister() {
           </div>
           <div className="card p-3 text-center bg-green-50 border-green-100">
             <p className="text-[10px] font-bold text-green-600 uppercase">Total Dr</p>
-            <p className="text-xl font-black text-green-800">{formatCurrency(ledgerTxns.filter(t => t.subType === 'in').reduce((s, t) => s + t.amount, 0))}</p>
+            <p className="text-xl font-black text-green-800">{formatCurrency(ledgerTxns.reduce((s, t) => s + t.debit, 0))}</p>
           </div>
           <div className="card p-3 text-center bg-red-50 border-red-100">
             <p className="text-[10px] font-bold text-red-600 uppercase">Total Cr</p>
-            <p className="text-xl font-black text-red-800">{formatCurrency(ledgerTxns.filter(t => t.subType === 'out').reduce((s, t) => s + t.amount, 0))}</p>
+            <p className="text-xl font-black text-red-800">{formatCurrency(ledgerTxns.reduce((s, t) => s + t.credit, 0))}</p>
           </div>
         </div>
 
@@ -171,24 +192,70 @@ export default function CashBankRegister() {
           </div>
         ) : (
           <div className="space-y-2">
+            {/* Header for Debit/Credit columns */}
+            <div className="flex items-center justify-between px-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              <span>Transaction Details</span>
+              <div className="flex items-center gap-6 mr-1">
+                <span className="w-24 text-right">Debit (Dr)</span>
+                <span className="w-24 text-right">Credit (Cr)</span>
+              </div>
+            </div>
+
             {ledgerTxns.map(tx => (
               <div key={tx.id} className="card p-3 border-l-4 border-l-indigo-400 hover:shadow-md transition-shadow">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
-                      tx.subType === 'out' ? 'bg-red-100 text-red-700' : 
-                      tx.subType === 'in' ? 'bg-green-100 text-green-700' : 
+                      tx.subType === 'out' || tx.subType === 'payment' ? 'bg-red-100 text-red-700' : 
+                      tx.subType === 'in' || tx.subType === 'receipt' ? 'bg-green-100 text-green-700' : 
                       'bg-blue-100 text-blue-700'
                     }`}>{tx.type}</span>
                     <span className="text-[11px] font-mono text-slate-500">{tx.refNo}</span>
                   </div>
-                  <span className="text-sm font-bold font-mono text-slate-800">{formatCurrency(tx.amount)}</span>
+                  
+                  {/* Two Columns for Debit and Credit */}
+                  <div className="flex items-center gap-6 font-mono text-xs">
+                    <div className="w-24 text-right">
+                      {tx.debit > 0 ? (
+                        <span className="text-green-700 font-bold">{formatCurrency(tx.debit)}</span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </div>
+                    <div className="w-24 text-right">
+                      {tx.credit > 0 ? (
+                        <span className="text-red-600 font-bold">{formatCurrency(tx.credit)}</span>
+                      ) : (
+                        <span className="text-slate-300">—</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-500">
-                  <span className="flex items-center gap-1"><Clock size={11} />{formatDate(tx.date)}</span>
-                  {tx.partyName && <span>· {tx.partyName}</span>}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-slate-500 border-t border-slate-50 pt-2">
+                  <span className="flex items-center gap-1 font-mono text-[10px] bg-slate-100 px-1.5 py-0.5 rounded"><Clock size={10} />{formatDate(tx.date)}</span>
+                  {tx.type === 'Contra' ? (
+                    <span className="text-slate-600">
+                      Payer: <span className="font-bold text-red-600">{tx.crName || 'Source'}</span>
+                      <span className="mx-1.5 text-slate-400">➔</span>
+                      Receiver: <span className="font-bold text-green-700">{tx.drName || 'Dest'}</span>
+                    </span>
+                  ) : tx.subType === 'payment' || tx.subType === 'out' ? (
+                    <span className="text-slate-600">
+                      Payer: <span className="font-bold text-slate-700">{selectedAccount.name}</span> · 
+                      Receiver: <span className="font-bold text-indigo-700">{tx.partyName || tx.drName || '—'}</span>
+                    </span>
+                  ) : (
+                    <span className="text-slate-600">
+                      Payer: <span className="font-bold text-indigo-700">{tx.partyName || tx.crName || '—'}</span> · 
+                      Receiver: <span className="font-bold text-slate-700">{selectedAccount.name}</span>
+                    </span>
+                  )}
                 </div>
-                {tx.narration && <p className="text-xs text-slate-400 mt-1">{tx.narration}</p>}
+                {tx.narration && (
+                  <p className="text-[10px] text-slate-400/80 mt-1.5 bg-slate-50 px-2 py-1 rounded italic truncate max-w-full" title={tx.narration}>
+                    {tx.narration}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -203,8 +270,8 @@ export default function CashBankRegister() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-800">Cash / Bank Registers</h1>
-          <p className="text-sm text-slate-500 mt-1">Real-time ledger balances of all accounts</p>
+          <h1 className="text-xl font-bold text-slate-800">Cash / Bank Ledgers</h1>
+          <p className="text-sm text-slate-500 mt-1">Real-time balances of all cash & bank accounts</p>
         </div>
         <button
           onClick={() => loadAccounts(true)}

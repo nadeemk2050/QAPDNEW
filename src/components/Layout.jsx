@@ -264,7 +264,7 @@ export default function Layout({ company, subUser, onLogout, children }) {
               )}
             </NavLink>
 
-            {/* Cash/Bank Register */}
+            {/* Cash/Bank Ledgers */}
             <NavLink
               to="/register"
               onClick={() => setSidebarOpen(false)}
@@ -277,7 +277,7 @@ export default function Layout({ company, subUser, onLogout, children }) {
               `}
             >
               <Building2 size={18} />
-              <span>Cash/Bank Register</span>
+              <span>Cash/Bank Ledgers</span>
               {location.pathname === '/register' && (
                 <ChevronRight size={14} className="ml-auto opacity-50" />
               )}
@@ -511,10 +511,10 @@ export default function Layout({ company, subUser, onLogout, children }) {
                 {!isInstalled && (
                   <button
                     onClick={handleInstallClick}
-                    className="btn-primary flex items-center gap-1.5 py-1 px-2.5 text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm"
+                    className="flex items-center gap-1.5 py-1.5 px-3 text-[10px] bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold rounded-full shadow-md active:scale-95 transition-all cursor-pointer"
                   >
-                    <Download size={11} />
-                    <span className="hidden xs:inline">Install</span>
+                    <Download size={11} className="animate-bounce" />
+                    <span>Install App</span>
                   </button>
                 )}
               </div>

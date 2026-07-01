@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom'
 import { 
   BookOpen, RefreshCw, Search, Filter, ArrowUpDown, 
   Receipt, Wallet, Notebook, AlertCircle, Clock, 
-  ChevronDown, ChevronUp, FileText, ChevronLeft, ChevronRight, Download, Share2
+  ChevronDown, ChevronUp, FileText, ChevronLeft, ChevronRight, Download, Share2, X
 } from 'lucide-react'
 import { downloadVoucherPdf, shareVoucherPdf, shareVoucherText } from '../utils/voucherPdf'
 import { getDaybookAll, getAccountLedger, listContra, listAccounts, listLedgers, deleteVoucher } from '../api'
@@ -54,6 +54,7 @@ export default function DaybookLive({ subUser }) {
   const [sortAsc, setSortAsc] = useState(false)
   const [expandedId, setExpandedId] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [selectedTx, setSelectedTx] = useState(null)
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
@@ -604,18 +605,12 @@ export default function DaybookLive({ subUser }) {
   // Dynamic balance and particulars mapping helper
   const getParticulars = (t) => {
     if (t.type === 'payments') {
-      const hasBankOrAccount = (name) => {
-        if (!name) return false;
-        const upper = name.toUpperCase();
-        return upper.includes('BANK') || upper.includes('A/C') || upper.includes('ACCOUNT');
-      };
-      if (t.subType === 'contra' || (t.drName && t.crName && (hasBankOrAccount(t.drName) || hasBankOrAccount(t.crName)))) {
-        return `${t.accountName} / ${t.drName === t.accountName ? t.crName : t.drName}`
-      }
-      return `${t.accountName} / ${t.partyName || t.description || 'Payment'}`
+      const payer = t.crName || t.accountName || '—'
+      const receiver = t.drName || t.partyName || '—'
+      return `${payer} ➔ ${receiver}`
     }
     if (t.type === 'journal_vouchers') {
-      return `${t.drName} / ${t.crName}`
+      return `${t.drName || '—'} / ${t.crName || '—'}`
     }
     return t.description || t.partyName || 'Transaction'
   }
@@ -624,14 +619,14 @@ export default function DaybookLive({ subUser }) {
     let list = transactions.filter(t => {
       // Filter by specific accountName if provided (Cash/Bank Register)
       if (filterAccountName) {
-        const nameLower = filterAccountName.toLowerCase()
-        const isMatch = (t.accountName || '').toLowerCase() === nameLower ||
-                        (t.drName || '').toLowerCase() === nameLower ||
-                        (t.crName || '').toLowerCase() === nameLower ||
-                        (t.partyName || '').toLowerCase() === nameLower ||
+        const nameLower = filterAccountName.trim().toLowerCase()
+        const isMatch = (t.accountName || '').trim().toLowerCase() === nameLower ||
+                        (t.drName || '').trim().toLowerCase() === nameLower ||
+                        (t.crName || '').trim().toLowerCase() === nameLower ||
+                        (t.partyName || '').trim().toLowerCase() === nameLower ||
                         (t.description || '').toLowerCase().includes(nameLower) ||
-                        (t.drName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower) ||
-                        (t.crName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
+                        (t.drName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower) ||
+                        (t.crName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower)
         if (!isMatch) return false
       }
 
@@ -746,11 +741,12 @@ export default function DaybookLive({ subUser }) {
       } else {
         // Fallback default daybook logic (when viewing all daybook logs)
         if (t.type === 'payments') {
-          if (t.subType === 'in' || t.subType === 'receipt') {
+          const subTypeLower = (t.subType || '').toLowerCase()
+          if (subTypeLower === 'in' || subTypeLower === 'receipt') {
             isDr = true
-          } else if (t.subType === 'out' || t.subType === 'payment') {
+          } else if (subTypeLower === 'out' || subTypeLower === 'payment') {
             isCr = true
-          } else if (t.subType?.toLowerCase() === 'contra') {
+          } else if (subTypeLower === 'contra') {
             isCr = true
           }
         } else if (t.type === 'journal_vouchers') {
@@ -1021,7 +1017,6 @@ export default function DaybookLive({ subUser }) {
                   <th className="p-3 text-right">Debit (DHS)</th>
                   <th className="p-3 text-right">Credit (DHS)</th>
                   <th className="p-3 text-right">Value</th>
-                  <th className="p-3 text-center">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
@@ -1045,7 +1040,6 @@ export default function DaybookLive({ subUser }) {
                         {accountCurrentBalance >= 0 ? 'Dr' : 'Cr'}
                       </span>
                     </td>
-                    <td className="p-3"></td>
                   </tr>
                 )}
                 {paginated.map((tx, i) => {
@@ -1083,7 +1077,8 @@ export default function DaybookLive({ subUser }) {
                   return (
                     <tr 
                       key={tx.id || i} 
-                      className="hover:bg-slate-50/70 transition-colors"
+                      className="hover:bg-slate-50/70 transition-colors cursor-pointer"
+                      onClick={() => setSelectedTx(tx)}
                     >
                       <td className="p-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
                         {formatDate(tx.date)}
@@ -1112,43 +1107,6 @@ export default function DaybookLive({ subUser }) {
                           {tx.runningBalance >= 0 ? 'Dr' : 'Cr'}
                         </span>
                       </td>
-                      <td className="p-3 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); downloadVoucherPdf(tx); }}
-                            className="p-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded transition-colors"
-                            title="Download PDF"
-                          >
-                            <Download size={12} />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); shareVoucherPdf(tx); }}
-                            className="p-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded transition-colors"
-                            title="Share PDF"
-                          >
-                            <Share2 size={12} />
-                          </button>
-                          
-                          {tx.type === 'payments' && (
-                            <>
-                              {tx.createdBy && subUser && tx.createdBy === subUser.id && (
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); navigate('/voucher/edit/' + tx.id); }}
-                                  className="px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded text-[9px] transition-colors"
-                                >
-                                  Edit
-                                </button>
-                              )}
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleDeleteVoucher(tx); }}
-                                className="px-1.5 py-0.5 bg-red-50 hover:bg-red-100 text-red-600 font-bold rounded text-[9px] transition-colors"
-                              >
-                                Delete
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
                     </tr>
                   )
                 })}
@@ -1160,154 +1118,76 @@ export default function DaybookLive({ subUser }) {
             {paginated.map((tx, i) => {
               const cfg = getTypeConfig(tx.type)
               const Icon = cfg.icon
-              const isExpanded = expandedId === tx.id
+              
+              let label = cfg.label
+              let colorClass = cfg.color
+              let bgClass = cfg.bg
+              
+              if (tx.type === 'payments') {
+                if (tx.subType === 'in' || tx.subType === 'receipt') {
+                  label = 'RECEIPT'
+                  colorClass = 'text-green-700'
+                  bgClass = 'bg-green-100/60 border border-green-200'
+                } else if (tx.subType === 'out' || tx.subType === 'payment') {
+                  label = 'PAYMENT'
+                  colorClass = 'text-red-700'
+                  bgClass = 'bg-red-100/60 border border-red-200'
+                } else if (tx.subType?.toLowerCase() === 'contra') {
+                  label = 'CONTRA'
+                  colorClass = 'text-blue-700'
+                  bgClass = 'bg-blue-100/60 border border-blue-200'
+                }
+              } else if (tx.type === 'journal_vouchers') {
+                label = 'JOURNAL'
+                colorClass = 'text-purple-700'
+                bgClass = 'bg-purple-100/60 border border-purple-200'
+              }
+
+              const particulars = getParticulars(tx)
 
               return (
                 <div
                   key={tx.id || i}
                   className="card p-4 hover:shadow-md transition-shadow cursor-pointer"
-                  onClick={() => setExpandedId(isExpanded ? null : tx.id)}
+                  onClick={() => setSelectedTx(tx)}
                 >
                   <div className="flex items-start gap-3">
                     {/* Type icon */}
-                    <div className={`w-9 h-9 rounded-xl ${cfg.bg} flex items-center justify-center shrink-0`}>
-                      <Icon size={16} className={cfg.color} />
+                    <div className={`w-9 h-9 rounded-xl ${bgClass} flex items-center justify-center shrink-0`}>
+                      <Icon size={16} className={colorClass} />
                     </div>
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`badge ${cfg.bg} ${cfg.color}`}>{cfg.label}</span>
-                        {tx.subType && (
-                          <span className="badge bg-slate-100 text-slate-600">{tx.subType}</span>
-                        )}
+                        <span className={`badge ${bgClass} ${colorClass}`}>{label}</span>
                         {tx.refNo && (
                           <span className="text-xs font-mono text-slate-500">{tx.refNo}</span>
                         )}
                       </div>
 
-                      <p className="text-sm font-semibold text-slate-800 mt-1.5">
+                      <p className="text-slate-800 font-bold uppercase text-[11px] mt-1.5">{particulars}</p>
+
+                      <p className="text-sm font-semibold text-slate-800 mt-1">
                         {formatCurrency(tx.amount)}
                       </p>
 
-                      <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
+                      <div className="flex items-center gap-3 mt-1.5 text-[11px] text-slate-500">
                         <span className="flex items-center gap-1">
                           <Clock size={11} />
                           {formatDate(tx.date)}
                         </span>
-                        {tx.partyName && <span>· {tx.partyName}</span>}
-                        {tx.accountName && <span>· {tx.accountName}</span>}
                       </div>
 
                       {tx.description && (
-                        <p className="text-xs text-slate-400 mt-1 line-clamp-1">{tx.description}</p>
-                      )}
-                    </div>
-
-                    {/* Expand indicator */}
-                    <div className="shrink-0 pt-1">
-                      {isExpanded ? <ChevronUp size={16} className="text-slate-400" /> : <ChevronDown size={16} className="text-slate-400" />}
-                    </div>
-                  </div>
-
-                  {/* Expanded details */}
-                  {isExpanded && (
-                    <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-3 text-xs">
-                      <div>
-                        <span className="text-slate-400 font-medium">Type</span>
-                        <p className="text-slate-700 font-medium capitalize">{tx.type.replace('_', ' ')}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-medium">Ref No</span>
-                        <p className="text-slate-700 font-mono">{tx.refNo || '—'}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-medium">Date</span>
-                        <p className="text-slate-700">{formatDate(tx.date)}</p>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 font-medium">Amount</span>
-                        <p className="text-slate-700 font-semibold">{formatCurrency(tx.amount)}</p>
-                      </div>
-                      {tx.drName && (
-                        <div>
-                          <span className="text-slate-400 font-medium">Debit</span>
-                          <p className="text-slate-700">{tx.drName}</p>
-                        </div>
-                      )}
-                      {tx.crName && (
-                        <div>
-                          <span className="text-slate-400 font-medium">Credit</span>
-                          <p className="text-slate-700">{tx.crName}</p>
-                        </div>
-                      )}
-                      {tx.partyName && (
-                        <div className="col-span-2">
-                          <span className="text-slate-400 font-medium">Party</span>
-                          <p className="text-slate-700">{tx.partyName}</p>
-                        </div>
-                      )}
-                      {tx.description && (
-                        <div className="col-span-2">
-                          <span className="text-slate-400 font-medium">Description</span>
-                          <p className="text-slate-700">{tx.description}</p>
-                        </div>
-                      )}
-
-                    <div className="col-span-2">
-                      <span className="text-slate-400 font-medium">Status</span>
-                      <span className={`badge ml-1 ${tx.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600'}`}>
-                        {tx.status || 'active'}
-                      </span>
-                    </div>
-                    <div className="col-span-2 flex items-center flex-wrap gap-2 pt-2 border-t border-slate-100 mt-2">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); downloadVoucherPdf(tx); }}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors"
-                      >
-                        <Download size={12} />
-                        PDF
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); shareVoucherPdf(tx); }}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl text-xs transition-colors"
-                      >
-                        <Share2 size={12} />
-                        Share PDF
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); shareVoucherText(tx); }}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-600 font-bold rounded-xl text-xs transition-colors"
-                      >
-                        <Share2 size={12} />
-                        Share Text
-                      </button>
-                      
-                      {tx.type === 'payments' && (
-                        <>
-                          {tx.createdBy && subUser && tx.createdBy === subUser.id && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); navigate('/voucher/edit/' + tx.id); }}
-                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-colors"
-                            >
-                              Edit
-                            </button>
-                          )}
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handleDeleteVoucher(tx); }}
-                            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition-colors"
-                          >
-                            Delete
-                          </button>
-                        </>
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-1 italic">{tx.description}</p>
                       )}
                     </div>
                   </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
+                </div>
+              )
+            })}
+          </div>
       ))}
 
       {/* Pagination controls */}
@@ -1335,11 +1215,127 @@ export default function DaybookLive({ subUser }) {
         </div>
       )}
 
-      {/* Count */}
-      {!loading && filtered.length > 0 && (
-        <p className="text-center text-[10px] text-slate-400 font-medium">
-          Showing {Math.min((currentPage - 1) * pageSize + 1, filtered.length)}-{Math.min(currentPage * pageSize, filtered.length)} of {filtered.length} matching transactions (from {transactions.length} loaded)
-        </p>
+      {/* Transaction Detail Modal */}
+      {selectedTx && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden transform scale-100 transition-all">
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
+              <div>
+                <span className="text-[10px] font-black text-indigo-600 uppercase tracking-widest">
+                  Transaction Detail
+                </span>
+                <h3 className="text-sm font-black text-slate-800 uppercase mt-0.5">
+                  Ref: {selectedTx.refNo || '—'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setSelectedTx(null)}
+                className="p-1.5 rounded-xl hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100/50">
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Date</p>
+                  <p className="font-mono text-slate-700 font-bold mt-0.5">{formatDate(selectedTx.date)}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Vch Type</p>
+                  <span className={`inline-block px-2 py-0.5 rounded-md text-[9px] font-bold mt-1 uppercase ${
+                    selectedTx.subType === 'out' || selectedTx.subType === 'payment' ? 'bg-red-100 text-red-700' : 
+                    selectedTx.subType === 'in' || selectedTx.subType === 'receipt' ? 'bg-green-100 text-green-700' : 
+                    'bg-blue-100 text-blue-700'
+                  }`}>
+                    {selectedTx.type || 'Transaction'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-start justify-between border-b border-slate-50 pb-2">
+                  <div className="space-y-0.5">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Payer (Credit)</p>
+                    <p className="font-bold text-red-600 uppercase text-[11px]">{selectedTx.crName || selectedTx.accountName || '—'}</p>
+                  </div>
+                  <span className="text-slate-300 font-bold mt-2">➔</span>
+                  <div className="space-y-0.5 text-right">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Receiver (Debit)</p>
+                    <p className="font-bold text-green-700 uppercase text-[11px]">{selectedTx.drName || selectedTx.partyName || '—'}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 border-b border-slate-50 pb-3">
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Debit Amount</p>
+                    <p className="font-mono text-sm font-bold text-green-700 mt-0.5">
+                      {selectedTx.debit > 0 ? `${formatCurrency(selectedTx.debit)} DHS` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Credit Amount</p>
+                    <p className="font-mono text-sm font-bold text-red-600 mt-0.5">
+                      {selectedTx.credit > 0 ? `${formatCurrency(selectedTx.credit)} DHS` : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedTx.description && (
+                  <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-100/50">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Narration / Description</p>
+                    <p className="text-slate-600 italic font-medium mt-1 leading-relaxed">{selectedTx.description}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions Footer */}
+            <div className="flex items-center justify-end gap-2 p-5 border-t border-slate-100 bg-slate-50/50">
+              <button
+                onClick={() => { downloadVoucherPdf(selectedTx); }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors"
+              >
+                <Download size={12} />
+                PDF
+              </button>
+              <button
+                onClick={() => { shareVoucherPdf(selectedTx); }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl text-xs transition-colors"
+              >
+                <Share2 size={12} />
+                Share
+              </button>
+              
+              {(selectedTx.type?.toLowerCase() === 'payment' || selectedTx.subType === 'payment' || selectedTx.subType === 'out') && (
+                <>
+                  {selectedTx.createdBy && subUser && selectedTx.createdBy === subUser.id && (
+                    <button
+                      onClick={() => { navigate('/voucher/edit/' + selectedTx.id); setSelectedTx(null); }}
+                      className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-colors"
+                    >
+                      Edit
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { 
+                      if (window.confirm("Are you sure you want to delete this voucher?")) {
+                        handleDeleteVoucher(selectedTx); 
+                        setSelectedTx(null);
+                      }
+                    }}
+                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl text-xs transition-colors"
+                  >
+                    Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
