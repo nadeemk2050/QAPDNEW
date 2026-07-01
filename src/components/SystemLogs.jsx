@@ -39,8 +39,11 @@ export default function SystemLogs({ onClose }) {
           allDocs.forEach(d => {
             const col = d.collectionName || 'unknown'
             counts[col] = (counts[col] || 0) + 1
-            if ((col.includes('log') || col.includes('system') || col.includes('activity')) && !sampleDoc) {
-              sampleDoc = { collectionName: col, id: d.id, keys: Object.keys(d.data || {}), data: d.data }
+            if ((col.includes('log') || col.includes('system') || col.includes('activity') || col.includes('audit')) && !sampleDoc) {
+              const hasQapd = JSON.stringify(d.data || {}).includes('(QAPD)')
+              if (!hasQapd || !sampleDoc) {
+                sampleDoc = { collectionName: col, id: d.id, keys: Object.keys(d.data || {}), data: d.data }
+              }
             }
           })
           setDebugInfo({ counts, sampleDoc })
@@ -184,20 +187,6 @@ export default function SystemLogs({ onClose }) {
             <FileText size={40} className="mx-auto mb-2 opacity-30 animate-pulse" />
             <p className="text-sm font-bold">No system logs found</p>
             <p className="text-xs mt-1">Actions performed will appear here automatically</p>
-            {debugInfo && (
-              <div className="mt-6 text-left max-w-md mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono text-slate-600 space-y-2">
-                <p className="font-bold text-slate-800 uppercase text-[9px] tracking-wide border-b border-slate-200 pb-1">Debug Diagnosis Panel</p>
-                <p><span className="font-bold text-indigo-600">Offline Collection Counts:</span> {JSON.stringify(debugInfo.counts)}</p>
-                {debugInfo.sampleDoc ? (
-                  <div>
-                    <p className="font-bold text-indigo-600 mt-1">Sample Doc from '{debugInfo.sampleDoc.collectionName}':</p>
-                    <pre className="mt-1 p-2 bg-slate-900 text-slate-100 rounded-lg overflow-auto max-h-40">{JSON.stringify(debugInfo.sampleDoc, null, 2)}</pre>
-                  </div>
-                ) : (
-                  <p className="text-red-500 font-bold">No log-related collections found offline!</p>
-                )}
-              </div>
-            )}
           </div>
         ) : (
           <div className="card p-0 overflow-hidden border border-slate-200 shadow-sm">
@@ -243,6 +232,22 @@ export default function SystemLogs({ onClose }) {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* Debug Diagnosis Panel (Always Visible at Bottom) */}
+        {debugInfo && (
+          <div className="mt-6 text-left max-w-lg mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono text-slate-600 space-y-2">
+            <p className="font-bold text-slate-800 uppercase text-[9px] tracking-wide border-b border-slate-200 pb-1">Debug Diagnosis Panel</p>
+            <p><span className="font-bold text-indigo-600">Offline Collection Counts:</span> {JSON.stringify(debugInfo.counts)}</p>
+            {debugInfo.sampleDoc ? (
+              <div>
+                <p className="font-bold text-indigo-600 mt-1">Sample Doc from '{debugInfo.sampleDoc.collectionName}':</p>
+                <pre className="mt-1 p-2 bg-slate-900 text-slate-100 rounded-lg overflow-auto max-h-40">{JSON.stringify(debugInfo.sampleDoc, null, 2)}</pre>
+              </div>
+            ) : (
+              <p className="text-red-500 font-bold">No log-related collections found offline!</p>
+            )}
           </div>
         )}
       </div>

@@ -541,13 +541,13 @@ export async function writeLog(action, voucher, oldValue = null) {
     date: new Date().toISOString().split('T')[0]
   }
 
-  // 1. Save log to local database (system_logs collection)
+  // 1. Save log to local database (audit_logs collection)
   const logId = 'log_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now()
-  const colRef = collection(db, 'system_logs')
+  const colRef = collection(db, 'audit_logs')
   await setDoc(doc(colRef, logId), logData)
 
   // 2. Sync to cloud instantly
-  await syncToCloud(companyId, 'system_logs', logId, logData)
+  await syncToCloud(companyId, 'audit_logs', logId, logData)
 }
 
 function formatCurrencyForLog(val) {
@@ -565,7 +565,7 @@ export async function listLogs() {
     const companyDB = await getDB()
     if (companyDB?.offline_records) {
       const docs = await companyDB.offline_records.find({
-        selector: { collectionName: 'system_logs' }
+        selector: { collectionName: 'audit_logs' }
       }).exec()
       
       const results = docs.map(d => {
