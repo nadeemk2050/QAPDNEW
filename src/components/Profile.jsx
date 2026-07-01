@@ -2,12 +2,14 @@ import React, { useState } from 'react'
 import { 
   Building2, Key, Shield, Mail, User, Calendar, 
   RefreshCw, CheckCircle, AlertCircle, Copy, Check,
-  Users, Hash, Clock
+  Users, Hash, Clock, FileText
 } from 'lucide-react'
+import SystemLogs from './SystemLogs'
 
 export default function Profile({ company, subUser, onRefresh }) {
   const [copied, setCopied] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -217,6 +219,30 @@ export default function Profile({ company, subUser, onRefresh }) {
           <p className="text-sm text-slate-500">No user logged in. Vouchers will be tagged as "QuickAccPro User".</p>
         )}
       </div>
+      {/* System Log History Card */}
+      <div className="card">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+              <FileText size={20} />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-700">System Log History</h2>
+              <p className="text-xs text-slate-400 mt-0.5">Watch real-time system log changes</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowLogs(true)}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition-all active:scale-[0.98]"
+          >
+            Open Logs
+          </button>
+        </div>
+      </div>
+
+      {showLogs && (
+        <SystemLogs onClose={() => setShowLogs(false)} />
+      )}
     </div>
   )
 }

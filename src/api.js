@@ -229,7 +229,8 @@ export async function addPayment(data) {
   try { localStorage.removeItem('quickaccpro_cached_transactions') } catch {}
 
   // 2. Push to cloud (real Firestore) for cross-device sync
-  syncToCloud(companyId, 'payments', voucherId, docData)
+  await syncToCloud(companyId, 'payments', voucherId, docData)
+  await writeLog('created', docData)
 
   return { success: true, id: voucherId }
 }
@@ -260,7 +261,8 @@ export async function addContra(data) {
   try { localStorage.removeItem('quickaccpro_cached_transactions') } catch {}
 
   // 2. Push to cloud
-  syncToCloud(companyId, 'payments', voucherId, docData)
+  await syncToCloud(companyId, 'payments', voucherId, docData)
+  await writeLog('created', docData)
 
   return { success: true, id: voucherId }
 }
@@ -321,14 +323,57 @@ export async function getVoucher(voucherId) {
 }
 
 export async function updateVoucher(voucherId, data) {
+  // Fetch old doc to get old amount and refNo/type for logging
+  let oldVoucher = null
+  try {
+    const res = await getVoucher(voucherId)
+    if (res.success) oldVoucher = res.voucher
+  } catch (e) {}
+
   const docRef = doc(db, 'payments', voucherId)
-  await setDoc(docRef, { ...data, updatedAt: Date.now() }, { merge: true })
+  const updatedData = { ...data, updatedAt: Date.now() }
+  await setDoc(docRef, updatedData, { merge: true })
+
+  // Sync to cloud
+  const companyId = getCurrentCompanyId()
+  if (companyId) {
+    await syncToCloud(companyId, 'payments', voucherId, updatedData)
+    if (oldVoucher) {
+      await writeLog('edited', updatedData, oldVoucher.totalAmount || oldVoucher.amount || 0)
+    }
+  }
+
+  // Clear daybook cache
+  try { localStorage.removeItem('quickaccpro_cached_transactions') } catch {}
+
   return { success: true }
 }
 
-export async function deleteVoucher(voucherId, collection) {
-  const docRef = doc(db, collection || 'payments', voucherId)
-  await updateDoc(docRef, { status: 'deleted', deletedAt: Date.now() })
+export async function deleteVoucher(voucherId, colName) {
+  let oldVoucher = null
+  try {
+    const res = await getVoucher(voucherId)
+    if (res.success) oldVoucher = res.voucher
+  } catch (e) {}
+
+  const collectionName = colName || 'payments'
+  const docRef = doc(db, collectionName, voucherId)
+  const deletedData = { status: 'deleted', deletedAt: Date.now(), deleted: true }
+  await updateDoc(docRef, deletedData)
+
+  const companyId = getCurrentCompanyId()
+  if (companyId) {
+    // Merge status with old document data to sync complete updated doc to cloud
+    const fullDoc = oldVoucher ? { ...oldVoucher, ...deletedData } : deletedData
+    await syncToCloud(companyId, collectionName, voucherId, fullDoc)
+    if (oldVoucher) {
+      await writeLog('deleted', oldVoucher, oldVoucher.totalAmount || oldVoucher.amount || 0)
+    }
+  }
+
+  // Clear daybook cache
+  try { localStorage.removeItem('quickaccpro_cached_transactions') } catch {}
+
   return { success: true }
 }
 
@@ -470,4 +515,73 @@ export async function listContra(params = {}) {
   } catch (e) {
     return { transactions: [], total: 0 }
   }
+}
+
+// ─── System Logs ─────────────────────────────────────────────────────────────
+
+export async function writeLog(action, voucher, oldValue = null) {
+  const companyId = getCurrentCompanyId()
+  if (!companyId) return
+
+  const subUser = getStoredSubUser()
+  const userStr = subUser ? `${subUser.username || subUser.name || 'User'} (${subUser.email || ''})` : 'QAPD App'
+
+  const docName = `Voucher: ${voucher.type || 'payment'} (${voucher.refNo || '—'})`
+  
+  const logData = {
+    docName,
+    refNo: voucher.refNo || '—',
+    voucherDate: voucher.date || '',
+    oldValue: oldValue ? formatCurrencyForLog(oldValue) : '—',
+    newValue: formatCurrencyForLog(voucher.totalAmount || voucher.amount || 0),
+    userEmail: userStr,
+    status: action.toUpperCase(), // 'CREATED', 'EDITED', 'DELETED'
+    timestamp: Date.now(),
+    date: new Date().toISOString().split('T')[0]
+  }
+
+  // 1. Save log to local database (logs collection)
+  const logId = 'log_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now()
+  const colRef = collection(db, 'logs')
+  await setDoc(doc(colRef, logId), logData)
+
+  // 2. Sync to cloud instantly
+  await syncToCloud(companyId, 'logs', logId, logData)
+}
+
+function formatCurrencyForLog(val) {
+  const num = Number(val || 0)
+  return new Intl.NumberFormat('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num)
+}
+
+export async function listLogs() {
+  const companyId = getCurrentCompanyId()
+  if (!companyId) return { logs: [] }
+  try {
+    const companyDB = await getDB()
+    if (companyDB?.offline_records) {
+      const docs = await companyDB.offline_records.find({
+        selector: { collectionName: 'logs' }
+      }).exec()
+      
+      const results = docs.map(d => {
+        const r = d.toJSON()
+        return {
+          id: r.id,
+          ...(r.data || {}),
+          timestamp: r.timestamp || r.data?.timestamp || Date.now()
+        }
+      })
+      
+      // Sort newest logs first
+      results.sort((a, b) => b.timestamp - a.timestamp)
+      return { logs: results }
+    }
+  } catch (e) {
+    console.error(e)
+  }
+  return { logs: [] }
 }
