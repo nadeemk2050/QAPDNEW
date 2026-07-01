@@ -524,7 +524,8 @@ export async function writeLog(action, voucher, oldValue = null) {
   if (!companyId) return
 
   const subUser = getStoredSubUser()
-  const userStr = subUser ? `${subUser.username || subUser.name || 'User'} (${subUser.email || ''})` : 'QAPD App'
+  const name = subUser ? (subUser.name || subUser.username || 'User') : 'Admin'
+  const userStr = `${name} (QAPD)`
 
   const docName = `Voucher: ${voucher.type || 'payment'} (${voucher.refNo || '—'})`
   

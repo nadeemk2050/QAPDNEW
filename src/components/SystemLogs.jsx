@@ -10,6 +10,7 @@ export default function SystemLogs({ onClose }) {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [debugInfo, setDebugInfo] = useState(null)
   const pageSize = 15
 
   const fetchLogsData = async () => {
@@ -27,6 +28,27 @@ export default function SystemLogs({ onClose }) {
 
   useEffect(() => {
     fetchLogsData()
+    // Diagnostic query to inspect offline_records
+    import('../localDB').then(async ({ getDB }) => {
+      try {
+        const companyDB = await getDB()
+        if (companyDB?.offline_records) {
+          const allDocs = await companyDB.offline_records.find().exec()
+          const counts = {}
+          let sampleDoc = null
+          allDocs.forEach(d => {
+            const col = d.collectionName || 'unknown'
+            counts[col] = (counts[col] || 0) + 1
+            if ((col.includes('log') || col.includes('system') || col.includes('activity')) && !sampleDoc) {
+              sampleDoc = { collectionName: col, id: d.id, keys: Object.keys(d.data || {}), data: d.data }
+            }
+          })
+          setDebugInfo({ counts, sampleDoc })
+        }
+      } catch (e) {
+        console.error('Debug query failed:', e)
+      }
+    })
   }, [])
 
   // Filter logs
@@ -158,10 +180,24 @@ export default function SystemLogs({ onClose }) {
             <span>{error}</span>
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
+          <div className="text-center py-10 text-slate-400">
             <FileText size={40} className="mx-auto mb-2 opacity-30 animate-pulse" />
             <p className="text-sm font-bold">No system logs found</p>
             <p className="text-xs mt-1">Actions performed will appear here automatically</p>
+            {debugInfo && (
+              <div className="mt-6 text-left max-w-md mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono text-slate-600 space-y-2">
+                <p className="font-bold text-slate-800 uppercase text-[9px] tracking-wide border-b border-slate-200 pb-1">Debug Diagnosis Panel</p>
+                <p><span className="font-bold text-indigo-600">Offline Collection Counts:</span> {JSON.stringify(debugInfo.counts)}</p>
+                {debugInfo.sampleDoc ? (
+                  <div>
+                    <p className="font-bold text-indigo-600 mt-1">Sample Doc from '{debugInfo.sampleDoc.collectionName}':</p>
+                    <pre className="mt-1 p-2 bg-slate-900 text-slate-100 rounded-lg overflow-auto max-h-40">{JSON.stringify(debugInfo.sampleDoc, null, 2)}</pre>
+                  </div>
+                ) : (
+                  <p className="text-red-500 font-bold">No log-related collections found offline!</p>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div className="card p-0 overflow-hidden border border-slate-200 shadow-sm">
