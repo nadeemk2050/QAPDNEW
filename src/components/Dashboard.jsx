@@ -7,6 +7,7 @@ import {
 import { db } from '../firebase'
 import { collection, query, where, getDocs } from 'firebase/firestore'
 import { getCurrentCompanyId, getDB } from '../localDB'
+import { getDaybookAll } from '../api'
 
 
 export default function Dashboard({ company, subUser }) {
@@ -38,7 +39,78 @@ export default function Dashboard({ company, subUser }) {
       const q = query(collection(db, 'accounts'), where('userId', '==', companyId))
       const snap = await getDocs(q)
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      setAccounts(list)
+      
+      const txnsData = await getDaybookAll().catch(() => ({ transactions: [] }))
+      const allTxns = txnsData.transactions || []
+      
+      const enrichedAccounts = list.map(acc => {
+        const nameLower = acc.name.trim().toLowerCase()
+        let balance = Number(acc.openingBalance || acc.balance || 0)
+        
+        const accTxns = allTxns.filter(t => {
+          return (t.accountName || '').trim().toLowerCase() === nameLower ||
+                 (t.drName || '').trim().toLowerCase() === nameLower ||
+                 (t.crName || '').trim().toLowerCase() === nameLower ||
+                 (t.partyName || '').trim().toLowerCase() === nameLower ||
+                 (t.drName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower) ||
+                 (t.crName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower)
+        })
+        accTxns.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+        
+        for (const t of accTxns) {
+          let isDr = false
+          let isCr = false
+          let amt = Number(t.amount || 0)
+          
+          const isAccountNameMatch = (t.accountName || '').toLowerCase() === nameLower
+          const isDrMatch = (t.drName || '').toLowerCase() === nameLower || 
+                            (t.drName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
+          const isCrMatch = (t.crName || '').toLowerCase() === nameLower || 
+                            (t.crName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
+          
+          if (t.type === 'payments' && isAccountNameMatch) {
+            if (t.subType === 'in' || t.subType === 'receipt') {
+              isDr = true
+            } else if (t.subType === 'out' || t.subType === 'payment') {
+              isCr = true
+            } else if (t.subType?.toLowerCase() === 'contra') {
+              if (isDrMatch && !isCrMatch) {
+                isDr = true
+              } else {
+                isCr = true
+              }
+            }
+          } else if (isDrMatch) {
+            isDr = true
+            if (t.isMulti && t.splits) {
+              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower)
+              if (matchedSplit) {
+                amt = Number(matchedSplit.amount || 0)
+              }
+            }
+          } else if (isCrMatch) {
+            isCr = true
+            if (t.isMulti && t.splits && t.type === 'journal_vouchers') {
+              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower && s.type === 'cr')
+              if (matchedSplit) {
+                amt = Number(matchedSplit.amount || 0)
+              }
+            }
+          } else if (isAccountNameMatch) {
+            isDr = true
+          }
+          
+          if (isDr) balance += amt
+          if (isCr) balance -= amt
+        }
+        
+        return {
+          ...acc,
+          balance
+        }
+      })
+      
+      setAccounts(enrichedAccounts)
     } catch (e) {
       console.warn('[QAPD] Failed to load accounts:', e)
     }

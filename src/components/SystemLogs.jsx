@@ -10,7 +10,6 @@ export default function SystemLogs({ onClose }) {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
-  const [debugInfo, setDebugInfo] = useState(null)
   const pageSize = 15
 
   const fetchLogsData = async () => {
@@ -28,30 +27,12 @@ export default function SystemLogs({ onClose }) {
 
   useEffect(() => {
     fetchLogsData()
-    // Diagnostic query to inspect offline_records
-    import('../localDB').then(async ({ getDB }) => {
-      try {
-        const companyDB = await getDB()
-        if (companyDB?.offline_records) {
-          const allDocs = await companyDB.offline_records.find().exec()
-          const counts = {}
-          let sampleDoc = null
-          allDocs.forEach(d => {
-            const col = d.collectionName || 'unknown'
-            counts[col] = (counts[col] || 0) + 1
-            if ((col.includes('log') || col.includes('system') || col.includes('activity') || col.includes('audit')) && !sampleDoc) {
-              const hasQapd = JSON.stringify(d.data || {}).includes('(QAPD)')
-              if (!hasQapd || !sampleDoc) {
-                sampleDoc = { collectionName: col, id: d.id, keys: Object.keys(d.data || {}), data: d.data }
-              }
-            }
-          })
-          setDebugInfo({ counts, sampleDoc })
-        }
-      } catch (e) {
-        console.error('Debug query failed:', e)
-      }
-    })
+    // Listen for cloud sync events to auto-refresh when new logs arrive
+    const handleSyncFlush = () => {
+      if (!loading) fetchLogsData()
+    }
+    window.addEventListener('qapd-cloud-sync-flush', handleSyncFlush)
+    return () => window.removeEventListener('qapd-cloud-sync-flush', handleSyncFlush)
   }, [])
 
   // Filter logs
@@ -220,7 +201,12 @@ export default function SystemLogs({ onClose }) {
                         <td className="p-3 font-mono text-slate-500">{log.voucherDate ? new Date(log.voucherDate).toLocaleDateString('en-IN') : '—'}</td>
                         <td className="p-3 text-right text-slate-400 font-mono font-bold">{log.oldValue || '—'}</td>
                         <td className="p-3 text-right text-indigo-700 font-mono font-black">{log.newValue || '—'}</td>
-                        <td className="p-3 text-slate-500 text-[10px]">{log.userEmail || '—'}</td>
+                        <td className="p-3 text-slate-500 text-[10px]">
+                          {log.userEmail || '—'}
+                          {log.source === 'QAPD' && (
+                            <span className="ml-1 px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-700 text-[7px] font-black uppercase tracking-wider border border-indigo-200">QAPD</span>
+                          )}
+                        </td>
                         <td className="p-3 text-center">
                           <span className={`px-2 py-0.5 rounded text-[9px] font-black border uppercase tracking-wider ${statusClass}`}>
                             {log.status || '—'}
@@ -235,21 +221,7 @@ export default function SystemLogs({ onClose }) {
           </div>
         )}
 
-        {/* Debug Diagnosis Panel (Always Visible at Bottom) */}
-        {debugInfo && (
-          <div className="mt-6 text-left max-w-lg mx-auto p-4 bg-slate-50 border border-slate-200 rounded-2xl text-[10px] font-mono text-slate-600 space-y-2">
-            <p className="font-bold text-slate-800 uppercase text-[9px] tracking-wide border-b border-slate-200 pb-1">Debug Diagnosis Panel</p>
-            <p><span className="font-bold text-indigo-600">Offline Collection Counts:</span> {JSON.stringify(debugInfo.counts)}</p>
-            {debugInfo.sampleDoc ? (
-              <div>
-                <p className="font-bold text-indigo-600 mt-1">Sample Doc from '{debugInfo.sampleDoc.collectionName}':</p>
-                <pre className="mt-1 p-2 bg-slate-900 text-slate-100 rounded-lg overflow-auto max-h-40">{JSON.stringify(debugInfo.sampleDoc, null, 2)}</pre>
-              </div>
-            ) : (
-              <p className="text-red-500 font-bold">No log-related collections found offline!</p>
-            )}
-          </div>
-        )}
+
       </div>
 
       {/* Pagination Footer */}

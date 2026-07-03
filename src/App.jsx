@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useNavigate, BrowserRouter } from 'react-route
 import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { auth } from './firebase'
 import { setCurrentCompanyId, getCurrentCompanyId, getMasterDB } from './localDB'
+import { startCloudSync, stopCloudSync } from './cloudSync'
 import Layout from './components/Layout'
 import WelcomeScreen from './components/WelcomeScreen'
 import CompanySelect from './components/CompanySelect'
@@ -63,6 +64,16 @@ export default function App() {
       })
     }
   }, [])
+
+  // Start/stop cloud sync listener when company changes
+  useEffect(() => {
+    if (company?.id) {
+      startCloudSync(company.id);
+    } else {
+      stopCloudSync();
+    }
+    return () => stopCloudSync();
+  }, [company?.id])
 
   const handleFirebaseLogin = useCallback((firebaseUser) => {
     setUser(firebaseUser)

@@ -5,6 +5,7 @@
 import { db, cloudDb } from './firebase';
 import { collection, query, where, getDocs, addDoc, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getCurrentCompanyId, getDB } from './localDB';
+import { markSelfSynced } from './cloudSync';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 const STORAGE_KEYS = {
@@ -230,6 +231,7 @@ export async function addPayment(data) {
 
   // 2. Push to cloud (real Firestore) for cross-device sync
   await syncToCloud(companyId, 'payments', voucherId, docData)
+  markSelfSynced(companyId, voucherId)
   await writeLog('created', docData)
 
   return { success: true, id: voucherId }
@@ -262,6 +264,7 @@ export async function addContra(data) {
 
   // 2. Push to cloud
   await syncToCloud(companyId, 'payments', voucherId, docData)
+  markSelfSynced(companyId, voucherId)
   await writeLog('created', docData)
 
   return { success: true, id: voucherId }
@@ -338,6 +341,7 @@ export async function updateVoucher(voucherId, data) {
   const companyId = getCurrentCompanyId()
   if (companyId) {
     await syncToCloud(companyId, 'payments', voucherId, updatedData)
+    markSelfSynced(companyId, voucherId)
     if (oldVoucher) {
       await writeLog('edited', updatedData, oldVoucher.totalAmount || oldVoucher.amount || 0)
     }
@@ -366,6 +370,7 @@ export async function deleteVoucher(voucherId, colName) {
     // Merge status with old document data to sync complete updated doc to cloud
     const fullDoc = oldVoucher ? { ...oldVoucher, ...deletedData } : deletedData
     await syncToCloud(companyId, collectionName, voucherId, fullDoc)
+    markSelfSynced(companyId, voucherId)
     if (oldVoucher) {
       await writeLog('deleted', oldVoucher, oldVoucher.totalAmount || oldVoucher.amount || 0)
     }
@@ -525,17 +530,23 @@ export async function writeLog(action, voucher, oldValue = null) {
 
   const subUser = getStoredSubUser()
   const name = subUser ? (subUser.name || subUser.username || 'User') : 'Admin'
+  // Format: "USERNAME (QAPD)" — ACCPRO displays this in "Added/Edited By" column
   const userStr = `${name} (QAPD)`
 
-  const docName = `Voucher: ${voucher.type || 'payment'} (${voucher.refNo || '—'})`
+  const vchType = voucher.type || 'payment'
+  const vchRef = voucher.refNo || '—'
+  const docName = `Voucher: ${vchType} (${vchRef})`
   
   const logData = {
     docName,
-    refNo: voucher.refNo || '—',
+    refNo: vchRef,
     voucherDate: voucher.date || '',
     oldValue: oldValue ? formatCurrencyForLog(oldValue) : '—',
     newValue: formatCurrencyForLog(voucher.totalAmount || voucher.amount || 0),
-    userEmail: userStr,
+    userEmail: userStr,       // Displayed in "Added/Edited By" column
+    userName: name,           // Clean name for ACCPRO parsing
+    source: 'QAPD',           // Explicit marker — ACCPRO uses this to show QAPD badge
+    sourceApp: 'QAPD',        // Same as source, for compatibility
     status: action.toUpperCase(), // 'CREATED', 'EDITED', 'DELETED'
     timestamp: Date.now(),
     date: new Date().toISOString().split('T')[0]
@@ -546,8 +557,24 @@ export async function writeLog(action, voucher, oldValue = null) {
   const colRef = collection(db, 'audit_logs')
   await setDoc(doc(colRef, logId), logData)
 
-  // 2. Sync to cloud instantly
-  await syncToCloud(companyId, 'audit_logs', logId, logData)
+  // 2. Sync to cloud instantly — write log fields at TOP LEVEL so ACCPRO's
+  //    system log page can read them directly (not nested under a 'data' field)
+  try {
+    const { collection: c, doc: d, setDoc: s } = await import('@firebase/firestore');
+    const livePath = `companies_live/${companyId}/records`;
+    const now = Date.now();
+    const cloudDocRef = d(c(cloudDb, livePath), logId);
+    await s(cloudDocRef, {
+      ...logData,            // Fields at top level: docName, refNo, userEmail, status, etc.
+      collectionName: 'audit_logs',
+      timestamp: now,
+      syncTimestamp: now
+    }, { merge: true });
+    console.log(`[QAPD] ✅ Log synced: ${logId}`);
+  } catch (e) {
+    console.warn('[QAPD] Log cloud sync error:', e.message);
+  }
+  markSelfSynced(companyId, logId)
 }
 
 function formatCurrencyForLog(val) {

@@ -58,7 +58,6 @@ export default function DaybookLive({ subUser }) {
   
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
-  const pageSize = 50
 
   // Date filters state
   const todayStr = getTodayStr()
@@ -68,6 +67,11 @@ export default function DaybookLive({ subUser }) {
   const [filterMonth, setFilterMonth] = useState(todayStr.substring(0, 7))
   const [startDate, setStartDate] = useState(yesterdayStr) // Default start range to yesterday
   const [endDate, setEndDate] = useState(todayStr)
+
+  const [breakupMode, setBreakupMode] = useState('detailed') // 'detailed', 'daily', 'weekly', 'monthly', 'quarterly', 'annual'
+  const [showBreakupSelector, setShowBreakupSelector] = useState(false)
+
+  const pageSize = (filterAccountName && dateMode === 'all') ? 40 : 50
 
 
   const handlePrevDate = () => {
@@ -236,6 +240,7 @@ export default function DaybookLive({ subUser }) {
 
   useEffect(() => {
     setDateMode('all')
+    setBreakupMode('detailed')
   }, [filterAccountName])
 
   useEffect(() => {
@@ -253,11 +258,23 @@ export default function DaybookLive({ subUser }) {
     return () => clearInterval(timer)
   }, [filterAccountName, refreshing, loading])
 
+  // Listen for cloud sync flush events — triggers instant refresh when ACCPRO
+  // creates/updates/deletes vouchers in the cloud
+  useEffect(() => {
+    const handleCloudSyncFlush = () => {
+      if (!refreshing && !loading) {
+        quietRefreshTransactions()
+      }
+    }
+    window.addEventListener('qapd-cloud-sync-flush', handleCloudSyncFlush)
+    return () => window.removeEventListener('qapd-cloud-sync-flush', handleCloudSyncFlush)
+  }, [filterAccountName, refreshing, loading])
+
 
   // Reset page when search or filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [search, filterType, dateMode, filterDate, filterMonth, startDate, endDate])
+  }, [search, filterType, dateMode, filterDate, filterMonth, startDate, endDate, breakupMode])
 
   // Listen to filter events from Layout top header bar
   useEffect(() => {
@@ -555,11 +572,11 @@ export default function DaybookLive({ subUser }) {
     }
   }
 
-  const formatCurrency = (val) => {
+  const formatCurrency = (val, decimals = 2) => {
     const num = Number(val || 0)
     return new Intl.NumberFormat('en-IN', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
     }).format(num)
   }
 
@@ -616,69 +633,26 @@ export default function DaybookLive({ subUser }) {
   }
 
   const getEnrichedTransactions = () => {
-    let list = transactions.filter(t => {
-      // Filter by specific accountName if provided (Cash/Bank Register)
+    // 1. Filter only by accountName first (do not filter by date/type yet)
+    let accountTxns = transactions.filter(t => {
       if (filterAccountName) {
         const nameLower = filterAccountName.trim().toLowerCase()
-        const isMatch = (t.accountName || '').trim().toLowerCase() === nameLower ||
-                        (t.drName || '').trim().toLowerCase() === nameLower ||
-                        (t.crName || '').trim().toLowerCase() === nameLower ||
-                        (t.partyName || '').trim().toLowerCase() === nameLower ||
-                        (t.description || '').toLowerCase().includes(nameLower) ||
-                        (t.drName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower) ||
-                        (t.crName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower)
-        if (!isMatch) return false
+        return (t.accountName || '').trim().toLowerCase() === nameLower ||
+               (t.drName || '').trim().toLowerCase() === nameLower ||
+               (t.crName || '').trim().toLowerCase() === nameLower ||
+               (t.partyName || '').trim().toLowerCase() === nameLower ||
+               (t.description || '').toLowerCase().includes(nameLower) ||
+               (t.drName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower) ||
+               (t.crName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower)
       }
-
-      // Date-wise filtering
-      if (dateMode === 'all') {
-        // No date filtering — show all
-      } else if (dateMode === 'single') {
-        if (t.date !== filterDate) return false
-      } else if (dateMode === 'custom') {
-        if (!t.date || t.date < startDate || t.date > endDate) return false
-      } else if (dateMode === 'month') {
-        if (!t.date || !t.date.startsWith(filterMonth)) return false
-      }
-
-      if (!filterAccountName) {
-        if (registerType === 'payment') {
-          if (t.type !== 'payments' || t.subType !== 'out') return false
-        } else if (registerType === 'receipt') {
-          if (t.type !== 'payments' || (t.subType !== 'in' && t.subType !== 'receipt')) return false
-        } else if (registerType === 'contra') {
-          if (t.type !== 'payments' || t.subType?.toLowerCase() !== 'contra') return false
-        } else {
-          // Normal Daybook filters
-          if (filterType !== 'all') {
-            if (filterType === 'payments') {
-              if (t.type !== 'payments' || (t.subType !== 'out' && t.subType !== 'payment')) return false
-            } else if (filterType === 'receipts') {
-              if (t.type !== 'payments' || (t.subType !== 'in' && t.subType !== 'receipt')) return false
-            } else if (filterType === 'contra') {
-              if (t.type !== 'payments' || t.subType?.toLowerCase() !== 'contra') return false
-            } else {
-              if (t.type !== filterType) return false
-            }
-          }
-        }
-      }
-
-      if (!search) return true
-      const q = search.toLowerCase()
-      return (t.refNo || '').toLowerCase().includes(q) ||
-             (t.description || '').toLowerCase().includes(q) ||
-             (t.partyName || '').toLowerCase().includes(q) ||
-             (t.accountName || '').toLowerCase().includes(q) ||
-             (t.drName || '').toLowerCase().includes(q) ||
-             (t.crName || '').toLowerCase().includes(q)
+      return true
     })
 
-    // Sort chronologically (oldest first) to compute running balance
-    list.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    // 2. Sort chronologically (oldest first) to compute running balance
+    accountTxns.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
 
     let runningVal = accountOpeningBalance
-    const enriched = list.map(t => {
+    const enrichedAll = accountTxns.map(t => {
       let isDr = false
       let isCr = false
       let amt = Number(t.amount || 0)
@@ -691,32 +665,19 @@ export default function DaybookLive({ subUser }) {
         const isCrMatch = (t.crName || '').toLowerCase() === nameLower || 
                           (t.crName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
 
-        // ─── Payment vouchers: determine side by subType ───
         if (t.type === 'payments' && isAccountNameMatch) {
           if (t.subType === 'in' || t.subType === 'receipt') {
-            // RECEIPT: Money coming IN to this account → Debit
             isDr = true
           } else if (t.subType === 'out' || t.subType === 'payment') {
-            // PAYMENT: Money going OUT from this account → Credit
             isCr = true
           } else if (t.subType?.toLowerCase() === 'contra') {
-            // CONTRA data model:
-            //   drName = destination account (receives money, being debited)
-            //   crName = source account (sends money, being credited)
-            //   accountName = source account
-            // So for the account we're viewing:
-            //   If it matches drName → it's the DESTINATION → receiving → DEBIT
-            //   If it matches crName or accountName → it's the SOURCE → sending → CREDIT
             if (isDrMatch && !isCrMatch) {
-              // Account is ONLY in drName → destination → receiving → DEBIT
               isDr = true
             } else {
-              // Account is in crName, accountName, or both → source side → CREDIT
               isCr = true
             }
           }
         } else if (isDrMatch) {
-          // Account is in drName → receiving end → DEBIT
           isDr = true
           if (t.isMulti && t.splits) {
             const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower)
@@ -725,7 +686,6 @@ export default function DaybookLive({ subUser }) {
             }
           }
         } else if (isCrMatch) {
-          // Account is in crName → giving end → CREDIT
           isCr = true
           if (t.isMulti && t.splits && t.type === 'journal_vouchers') {
             const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower && s.type === 'cr')
@@ -734,12 +694,9 @@ export default function DaybookLive({ subUser }) {
             }
           }
         } else if (isAccountNameMatch) {
-          // accountName matches but no drName/crName match and not a payment voucher
-          // This is likely an invoice or journal — treat as debit by default
           isDr = true
         }
       } else {
-        // Fallback default daybook logic (when viewing all daybook logs)
         if (t.type === 'payments') {
           const subTypeLower = (t.subType || '').toLowerCase()
           if (subTypeLower === 'in' || subTypeLower === 'receipt') {
@@ -765,16 +722,146 @@ export default function DaybookLive({ subUser }) {
       }
     })
 
+    // 3. Now apply the date and type and search filters to enrichedAll to get the list to display in the UI
+    let list = enrichedAll.filter(t => {
+      // Date-wise filtering
+      if (dateMode === 'all') {
+        // No date filtering — show all
+      } else if (dateMode === 'single') {
+        if (t.date !== filterDate) return false
+      } else if (dateMode === 'custom') {
+        if (!t.date || t.date < startDate || t.date > endDate) return false
+      } else if (dateMode === 'month') {
+        if (!t.date || !t.date.startsWith(filterMonth)) return false
+      }
+
+      if (!filterAccountName) {
+        if (registerType === 'payment') {
+          if (t.type !== 'payments' || t.subType !== 'out') return false
+        } else if (registerType === 'receipt') {
+          if (t.type !== 'payments' || (t.subType !== 'in' && t.subType !== 'receipt')) return false
+        } else if (registerType === 'contra') {
+          if (t.type !== 'payments' || t.subType?.toLowerCase() !== 'contra') return false
+        } else {
+          if (filterType !== 'all') {
+            if (filterType === 'payments') {
+              if (t.type !== 'payments' || (t.subType !== 'out' && t.subType !== 'payment')) return false
+            } else if (filterType === 'receipts') {
+              if (t.type !== 'payments' || (t.subType !== 'in' && t.subType !== 'receipt')) return false
+            } else if (filterType === 'contra') {
+              if (t.type !== 'payments' || t.subType?.toLowerCase() !== 'contra') return false
+            } else {
+              if (t.type !== filterType) return false
+            }
+          }
+        }
+      }
+
+      if (!search) return true
+      const q = search.toLowerCase()
+      return (t.refNo || '').toLowerCase().includes(q) ||
+             (t.description || '').toLowerCase().includes(q) ||
+             (t.partyName || '').toLowerCase().includes(q) ||
+             (t.accountName || '').toLowerCase().includes(q) ||
+             (t.drName || '').toLowerCase().includes(q) ||
+             (t.crName || '').toLowerCase().includes(q)
+    })
+
     // Sort according to UI sorting preference (default newest first)
-    enriched.sort((a, b) => {
+    list.sort((a, b) => {
       const cmp = (a.date || '').localeCompare(b.date || '')
       return sortAsc ? cmp : -cmp
     })
 
-    return enriched
+    return { list, enrichedAll }
   }
 
-  const filtered = getEnrichedTransactions()
+  const getGroupedTransactions = () => {
+    const { list } = getEnrichedTransactions()
+    const groups = {}
+    
+    // Sort list chronologically (oldest first) to compute correct closing balances
+    const chronologicalList = [...list].sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    
+    chronologicalList.forEach(t => {
+      let key = ''
+      let label = ''
+      
+      const d = new Date(t.date)
+      if (isNaN(d.getTime())) {
+        key = 'unknown'
+        label = 'Unknown Period'
+      } else {
+        const year = d.getFullYear()
+        if (breakupMode === 'daily') {
+          key = t.date
+          label = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+        } else if (breakupMode === 'weekly') {
+          const target = new Date(d.valueOf())
+          const dayNr = (d.getDay() + 6) % 7
+          target.setDate(target.getDate() - dayNr + 3)
+          const firstThursday = target.valueOf()
+          target.setMonth(0, 1)
+          if (target.getDay() !== 4) {
+            target.setMonth(0, 1 + ((4 - target.getDay() + 7) % 7))
+          }
+          const weekNum = 1 + Math.ceil((firstThursday - target) / 604800000)
+          
+          const start = new Date(d.valueOf())
+          start.setDate(start.getDate() - dayNr)
+          const end = new Date(start.valueOf())
+          end.setDate(end.getDate() + 6)
+          
+          const formatDateCompact = (date) => {
+            return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+          }
+          
+          key = `${start.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+          label = `Week ${weekNum}, ${start.getFullYear()} (${formatDateCompact(start)} - ${formatDateCompact(end)})`
+        } else if (breakupMode === 'monthly') {
+          const monthStr = d.toLocaleDateString('en-IN', { month: 'long' })
+          key = `${year}-${String(d.getMonth() + 1).padStart(2, '0')}`
+          label = `${monthStr} ${year}`
+        } else if (breakupMode === 'quarterly') {
+          const quarter = Math.floor(d.getMonth() / 3) + 1
+          const qNames = ['Jan - Mar', 'Apr - Jun', 'Jul - Sep', 'Oct - Dec']
+          key = `${year}-Q${quarter}`
+          label = `Q${quarter} ${year} (${qNames[quarter - 1]})`
+        } else if (breakupMode === 'annual') {
+          key = `${year}`
+          label = `${year}`
+        }
+      }
+      
+      if (!groups[key]) {
+        groups[key] = {
+          period: label,
+          key,
+          vouchersCount: 0,
+          debit: 0,
+          credit: 0,
+          lastRunningBalance: accountOpeningBalance
+        }
+      }
+      
+      groups[key].vouchersCount += 1
+      groups[key].debit += t.debit || 0
+      groups[key].credit += t.credit || 0
+      groups[key].lastRunningBalance = t.runningBalance
+    })
+    
+    const result = Object.values(groups)
+    result.sort((a, b) => a.key.localeCompare(b.key))
+    
+    if (!sortAsc) {
+      result.reverse()
+    }
+    
+    return result
+  }
+
+  const filteredData = getEnrichedTransactions()
+  const filtered = filteredData.list
 
   // Calculate final dynamic balance for summary card
   const getFinalRunningBalance = () => {
@@ -782,26 +869,13 @@ export default function DaybookLive({ subUser }) {
     const newest = sortAsc ? filtered[filtered.length - 1] : filtered[0]
     return newest.runningBalance
   }
-  // Get exact closing balance from cache
+
+  // Get exact closing balance dynamically
   const getAccountCurrentBalance = () => {
     if (!filterAccountName) return null
-    try {
-      const cachedAccountsRaw = localStorage.getItem('quickaccpro_cached_accounts')
-      if (cachedAccountsRaw) {
-        const accounts = JSON.parse(cachedAccountsRaw)
-        const matched = accounts.find(a => (a.name || '').toLowerCase() === filterAccountName.toLowerCase())
-        if (matched && matched.balance !== undefined) return Number(matched.balance)
-      }
-    } catch (e) {}
-    try {
-      const cachedLedgersRaw = localStorage.getItem('quickaccpro_cached_ledgers')
-      if (cachedLedgersRaw) {
-        const ledgers = JSON.parse(cachedLedgersRaw)
-        const matched = ledgers.find(l => (l.name || '').toLowerCase() === filterAccountName.toLowerCase())
-        if (matched && matched.balance !== undefined) return Number(matched.balance)
-      }
-    } catch (e) {}
-    return getFinalRunningBalance()
+    const { enrichedAll } = filteredData
+    if (enrichedAll.length === 0) return accountOpeningBalance
+    return enrichedAll[enrichedAll.length - 1].runningBalance
   }
   const accountCurrentBalance = getAccountCurrentBalance()
 
@@ -905,11 +979,89 @@ export default function DaybookLive({ subUser }) {
     }
   }, [filtered, filterAccountName, dateMode])
 
+  const handlePeriodClick = (row) => {
+    const key = row.key
+    if (breakupMode === 'daily') {
+      setDateMode('single')
+      setFilterDate(key)
+    } else if (breakupMode === 'weekly') {
+      const { list } = getEnrichedTransactions()
+      const txnsInPeriod = list.filter(t => {
+        const d = new Date(t.date)
+        if (isNaN(d.getTime())) return false
+        const target = new Date(d.valueOf())
+        const dayNr = (d.getDay() + 6) % 7
+        target.setDate(target.getDate() - dayNr + 3)
+        const firstThursday = target.valueOf()
+        target.setMonth(0, 1)
+        if (target.getDay() !== 4) {
+          target.setMonth(0, 1 + ((4 - target.getDay() + 7) % 7))
+        }
+        const weekNum = 1 + Math.ceil((firstThursday - target) / 604800000)
+        const start = new Date(d.valueOf())
+        start.setDate(start.getDate() - dayNr)
+        const calculatedKey = `${start.getFullYear()}-W${String(weekNum).padStart(2, '0')}`
+        return calculatedKey === key
+      })
+      
+      if (txnsInPeriod.length > 0) {
+        const dates = txnsInPeriod.map(t => t.date).filter(Boolean)
+        dates.sort()
+        setDateMode('custom')
+        setStartDate(dates[0])
+        setEndDate(dates[dates.length - 1])
+      } else {
+        const [year, weekStr] = key.split('-W')
+        const week = Number(weekStr)
+        const simple = new Date(Number(year), 0, 1 + (week - 1) * 7)
+        const dow = simple.getDay()
+        const ISOweekStart = simple
+        if (dow <= 4) {
+          ISOweekStart.setDate(simple.getDate() - simple.getDay() + 1)
+        } else {
+          ISOweekStart.setDate(simple.getDate() + 8 - simple.getDay())
+        }
+        const startStr = ISOweekStart.toISOString().split('T')[0]
+        const ISOweekEnd = new Date(ISOweekStart.valueOf())
+        ISOweekEnd.setDate(ISOweekEnd.getDate() + 6)
+        const endStr = ISOweekEnd.toISOString().split('T')[0]
+        
+        setDateMode('custom')
+        setStartDate(startStr)
+        setEndDate(endStr)
+      }
+    } else if (breakupMode === 'monthly') {
+      setDateMode('month')
+      setFilterMonth(key)
+    } else if (breakupMode === 'quarterly') {
+      const [year, qStr] = key.split('-Q')
+      const quarter = Number(qStr)
+      const startMonth = String((quarter - 1) * 3 + 1).padStart(2, '0')
+      const endMonth = String(quarter * 3).padStart(2, '0')
+      const lastDay = new Date(Number(year), quarter * 3, 0).getDate()
+      
+      setDateMode('custom')
+      setStartDate(`${year}-${startMonth}-01`)
+      setEndDate(`${year}-${endMonth}-${String(lastDay).padStart(2, '0')}`)
+    } else if (breakupMode === 'annual') {
+      setDateMode('custom')
+      setStartDate(`${key}-01-01`)
+      setEndDate(`${key}-12-31`)
+    }
+    
+    setBreakupMode('detailed')
+  }
+
   const getTypeConfig = (type) => TYPE_CONFIG[type] || { label: type, icon: FileText, color: 'text-slate-600', bg: 'bg-slate-100' }
 
   // Paginated List
-  const totalPages = Math.ceil(filtered.length / pageSize)
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const groupedData = getGroupedTransactions()
+  const totalPages = breakupMode === 'detailed'
+    ? Math.ceil(filtered.length / pageSize)
+    : Math.ceil(groupedData.length / pageSize)
+  const paginated = breakupMode === 'detailed'
+    ? filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    : groupedData.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   // Calculate display range label
   const getRangeLabel = () => {
@@ -945,6 +1097,50 @@ export default function DaybookLive({ subUser }) {
                   <option value="journal_vouchers">Journals</option>
                 </select>
               </>
+            )}
+            {filterAccountName && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowBreakupSelector(!showBreakupSelector)}
+                  className="flex items-center gap-1.5 py-1 px-2.5 text-xs font-bold bg-white border border-slate-200 text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm active:scale-95 transition-all cursor-pointer whitespace-nowrap"
+                >
+                  <span>{
+                    breakupMode === 'detailed' ? 'Detailed View' :
+                    breakupMode === 'daily' ? 'Daily View' :
+                    breakupMode === 'weekly' ? 'Weekly View' :
+                    breakupMode === 'monthly' ? 'Monthly View' :
+                    breakupMode === 'quarterly' ? 'Quarterly View' : 'Annual View'
+                  }</span>
+                  <ChevronDown size={14} />
+                </button>
+                {showBreakupSelector && (
+                  <div className="absolute right-0 mt-1.5 w-64 bg-white border border-slate-200 rounded-xl shadow-lg z-50 py-1 text-slate-700">
+                    <div className="px-3 py-1.5 border-b border-slate-100 text-[10px] font-black text-indigo-950 tracking-wider">
+                      SELECT BREAKUP MODE
+                    </div>
+                    {[
+                      { mode: 'detailed', title: 'DETAILED TRANSACTIONS', desc: 'All entries line by line' },
+                      { mode: 'daily', title: 'DAILY BREAKUP SUMMARY', desc: 'Date, Debit, Credit, Value' },
+                      { mode: 'weekly', title: 'WEEKLY BREAKUP SUMMARY', desc: 'Week-wise totals' },
+                      { mode: 'monthly', title: 'MONTHLY BREAKUP SUMMARY', desc: 'Month-wise totals' },
+                      { mode: 'quarterly', title: 'QUARTERLY BREAKUP SUMMARY', desc: 'Quarter-wise totals' },
+                      { mode: 'annual', title: 'ANNUAL BREAKUP SUMMARY', desc: 'Year-wise totals' }
+                    ].map(item => (
+                      <button
+                        key={item.mode}
+                        onClick={() => {
+                          setBreakupMode(item.mode)
+                          setShowBreakupSelector(false)
+                        }}
+                        className={`w-full text-left px-4 py-2 hover:bg-indigo-50 transition-colors flex flex-col gap-0.5 ${breakupMode === item.mode ? 'bg-indigo-50 border-r-4 border-indigo-600' : ''}`}
+                      >
+                        <span className="text-[11px] font-extrabold text-slate-800">{item.title}</span>
+                        <span className="text-[9px] text-slate-400 font-semibold">{item.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <button
               onClick={() => setSortAsc(!sortAsc)}
@@ -1002,117 +1198,176 @@ export default function DaybookLive({ subUser }) {
       {/* Transaction list */}
       {!loading && paginated.length > 0 && (
         filterAccountName ? (
-          <div className="card overflow-x-auto p-0 border border-slate-200 shadow-sm">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-900 text-white border-b border-slate-700 text-[10px] font-bold uppercase tracking-wider select-none">
-                  <th onClick={() => setSortAsc(!sortAsc)} className="p-3 cursor-pointer hover:bg-slate-800 transition-colors select-none">
-                    Date {sortAsc ? '▲' : '▼'}
-                  </th>
-                  <th className="p-3">Vch Type</th>
-                  <th className="p-3">Particulars</th>
-                  <th onClick={() => setSortAsc(!sortAsc)} className="p-3 cursor-pointer hover:bg-slate-800 transition-colors select-none">
-                    Ref
-                  </th>
-                  <th className="p-3 text-right">Debit (DHS)</th>
-                  <th className="p-3 text-right">Credit (DHS)</th>
-                  <th className="p-3 text-right">Value</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
-                {filterAccountName && (
-                  <tr className="bg-slate-100/90 font-bold border-b border-slate-200">
-                    <td className="p-3"></td>
-                    <td className="p-3 text-slate-500 font-bold text-[9px] uppercase tracking-wider">TOTALS</td>
-                    <td className="p-3 text-right text-slate-800 font-extrabold text-[10px] uppercase tracking-wide">
-                      CURRENT TOTALS:
-                    </td>
-                    <td className="p-3"></td>
+          breakupMode === 'detailed' ? (
+            <div className="card overflow-x-auto p-0 border border-slate-200 shadow-sm">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-900 text-white border-b border-slate-700 text-[10px] font-bold uppercase tracking-wider select-none">
+                    <th onClick={() => setSortAsc(!sortAsc)} className="p-3 cursor-pointer hover:bg-slate-800 transition-colors select-none">
+                      Date {sortAsc ? '▲' : '▼'}
+                    </th>
+                    <th className="p-3">Vch Type</th>
+                    <th className="p-3">Particulars</th>
+                    <th onClick={() => setSortAsc(!sortAsc)} className="p-3 cursor-pointer hover:bg-slate-800 transition-colors select-none">
+                      Ref
+                    </th>
+                    <th className="p-3 text-right">Debit (DHS)</th>
+                    <th className="p-3 text-right">Credit (DHS)</th>
+                    <th className="p-3 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                  {filterAccountName && (
+                    <tr className="bg-slate-100/90 font-bold border-b border-slate-200">
+                      <td className="p-3"></td>
+                      <td className="p-3 text-slate-500 font-bold text-[9px] uppercase tracking-wider">TOTALS</td>
+                      <td className="p-3 text-right text-slate-800 font-extrabold text-[10px] uppercase tracking-wide">
+                        CURRENT TOTALS:
+                      </td>
+                      <td className="p-3"></td>
+                      <td className="p-3 text-right text-green-700 font-bold font-mono text-[11px] whitespace-nowrap">
+                        {formatCurrency(filtered.reduce((sum, t) => sum + (t.debit || 0), 0))}
+                      </td>
+                      <td className="p-3 text-right text-red-600 font-bold font-mono text-[11px] whitespace-nowrap">
+                        {formatCurrency(filtered.reduce((sum, t) => sum + (t.credit || 0), 0))}
+                      </td>
+                      <td className="p-3 text-right text-slate-800 font-bold font-mono text-[11px] whitespace-nowrap">
+                        {formatCurrency(Math.abs(accountCurrentBalance))}
+                        <span className="text-[9px] text-slate-400 ml-1">
+                          {accountCurrentBalance >= 0 ? 'Dr' : 'Cr'}
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                  {paginated.map((tx, i) => {
+                    const cfg = getTypeConfig(tx.type)
+                    const isDr = tx.debit > 0
+                    const isCr = tx.credit > 0
+                    
+                    // Label & styling overrides for Debit/Credit
+                    let label = cfg.label
+                    let colorClass = cfg.color
+                    let bgClass = cfg.bg
+                    
+                    if (tx.type === 'payments') {
+                      if (tx.subType === 'in' || tx.subType === 'receipt') {
+                        label = 'RECEIPT'
+                        colorClass = 'text-green-700'
+                        bgClass = 'bg-green-100/60 border border-green-200'
+                      } else if (tx.subType === 'out' || tx.subType === 'payment') {
+                        label = 'PAYMENT'
+                        colorClass = 'text-red-700'
+                        bgClass = 'bg-red-100/60 border border-red-200'
+                      } else if (tx.subType?.toLowerCase() === 'contra') {
+                        label = 'CONTRA'
+                        colorClass = 'text-blue-700'
+                        bgClass = 'bg-blue-100/60 border border-blue-200'
+                      }
+                    } else if (tx.type === 'journal_vouchers') {
+                      label = 'JOURNAL'
+                      colorClass = 'text-purple-700'
+                      bgClass = 'bg-purple-100/60 border border-purple-200'
+                    }
+
+                    const particulars = getParticulars(tx)
+
+                    return (
+                      <tr 
+                        key={tx.id || i} 
+                        className="hover:bg-slate-50/70 transition-colors cursor-pointer"
+                        onClick={() => setSelectedTx(tx)}
+                      >
+                        <td className="p-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
+                          {formatDate(tx.date)}
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${bgClass} ${colorClass}`}>
+                            {label}
+                          </span>
+                        </td>
+                        <td className="p-3 max-w-[240px] truncate">
+                          <span className="text-slate-800 font-bold uppercase text-[11px] block">{particulars}</span>
+                          {tx.description && (
+                            <span className="text-[10px] text-slate-400 font-medium italic truncate mt-0.5 block">{tx.description}</span>
+                          )}
+                        </td>
+                        <td className="p-3 font-mono text-slate-500 text-[11px]">{tx.refNo || '—'}</td>
+                        <td className="p-3 text-right text-green-700 font-bold font-mono text-[11px]">
+                          {isDr ? formatCurrency(tx.debit) : '—'}
+                        </td>
+                        <td className="p-3 text-right text-red-600 font-bold font-mono text-[11px]">
+                          {isCr ? formatCurrency(tx.credit) : '—'}
+                        </td>
+                        <td className="p-3 text-right text-slate-800 font-bold font-mono text-[11px] whitespace-nowrap">
+                          {formatCurrency(Math.abs(tx.runningBalance))}
+                          <span className="text-[9px] text-slate-400 ml-1">
+                            {tx.runningBalance >= 0 ? 'Dr' : 'Cr'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="card overflow-x-auto p-0 border border-slate-200 shadow-sm">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-900 text-white border-b border-slate-700 text-[10px] font-bold uppercase tracking-wider select-none">
+                    <th className="p-3">PERIOD</th>
+                    <th className="p-3 text-center">VOUCHERS</th>
+                    <th className="p-3 text-right">DEBIT (AED)</th>
+                    <th className="p-3 text-right">CREDIT (AED)</th>
+                    <th className="p-3 text-right">BALANCE</th>
+                    <th className="p-3 text-center">SUMMARY</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-semibold text-slate-700">
+                  <tr className="bg-slate-100 font-bold border-b border-slate-200">
+                    <td className="p-3 text-slate-800 font-extrabold text-[10px] uppercase tracking-wider">CURRENT TOTALS:</td>
+                    <td className="p-3 text-center text-slate-600">({filtered.length} Vch)</td>
                     <td className="p-3 text-right text-green-700 font-bold font-mono text-[11px] whitespace-nowrap">
-                      {formatCurrency(filtered.reduce((sum, t) => sum + (t.debit || 0), 0))}
+                      {formatCurrency(filtered.reduce((sum, t) => sum + (t.debit || 0), 0), 3)}
                     </td>
                     <td className="p-3 text-right text-red-600 font-bold font-mono text-[11px] whitespace-nowrap">
-                      {formatCurrency(filtered.reduce((sum, t) => sum + (t.credit || 0), 0))}
+                      {formatCurrency(filtered.reduce((sum, t) => sum + (t.credit || 0), 0), 3)}
                     </td>
                     <td className="p-3 text-right text-slate-800 font-bold font-mono text-[11px] whitespace-nowrap">
-                      {formatCurrency(Math.abs(accountCurrentBalance))}
+                      {formatCurrency(Math.abs(accountCurrentBalance), 3)}
                       <span className="text-[9px] text-slate-400 ml-1">
                         {accountCurrentBalance >= 0 ? 'Dr' : 'Cr'}
                       </span>
                     </td>
+                    <td className="p-3 text-center text-slate-300">—</td>
                   </tr>
-                )}
-                {paginated.map((tx, i) => {
-                  const cfg = getTypeConfig(tx.type)
-                  const isDr = tx.debit > 0
-                  const isCr = tx.credit > 0
-                  
-                  // Label & styling overrides for Debit/Credit
-                  let label = cfg.label
-                  let colorClass = cfg.color
-                  let bgClass = cfg.bg
-                  
-                  if (tx.type === 'payments') {
-                    if (tx.subType === 'in' || tx.subType === 'receipt') {
-                      label = 'RECEIPT'
-                      colorClass = 'text-green-700'
-                      bgClass = 'bg-green-100/60 border border-green-200'
-                    } else if (tx.subType === 'out' || tx.subType === 'payment') {
-                      label = 'PAYMENT'
-                      colorClass = 'text-red-700'
-                      bgClass = 'bg-red-100/60 border border-red-200'
-                    } else if (tx.subType?.toLowerCase() === 'contra') {
-                      label = 'CONTRA'
-                      colorClass = 'text-blue-700'
-                      bgClass = 'bg-blue-100/60 border border-blue-200'
-                    }
-                  } else if (tx.type === 'journal_vouchers') {
-                    label = 'JOURNAL'
-                    colorClass = 'text-purple-700'
-                    bgClass = 'bg-purple-100/60 border border-purple-200'
-                  }
-
-                  const particulars = getParticulars(tx)
-
-                  return (
+                  {paginated.map((row, i) => (
                     <tr 
-                      key={tx.id || i} 
-                      className="hover:bg-slate-50/70 transition-colors cursor-pointer"
-                      onClick={() => setSelectedTx(tx)}
+                      key={row.key} 
+                      onClick={() => handlePeriodClick(row)}
+                      className="hover:bg-slate-50/80 border-b border-slate-100 cursor-pointer active:bg-slate-100/50 transition-colors"
                     >
-                      <td className="p-3 whitespace-nowrap text-slate-500 font-mono text-[11px]">
-                        {formatDate(tx.date)}
+                      <td className="p-3 text-indigo-700 font-bold uppercase">{row.period}</td>
+                      <td className="p-3 text-center text-slate-500">({row.vouchersCount} Vch)</td>
+                      <td className="p-3 text-right text-green-700 font-bold font-mono">
+                        {row.debit > 0 ? formatCurrency(row.debit, 3) : '0.000'}
                       </td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold ${bgClass} ${colorClass}`}>
-                          {label}
+                      <td className="p-3 text-right text-red-600 font-bold font-mono">
+                        {row.credit > 0 ? formatCurrency(row.credit, 3) : '0.000'}
+                      </td>
+                      <td className="p-3 text-right font-bold font-mono whitespace-nowrap">
+                        {formatCurrency(Math.abs(row.lastRunningBalance), 3)}
+                        <span className={`text-[9px] ml-1 ${row.lastRunningBalance >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {row.lastRunningBalance >= 0 ? 'Dr' : 'Cr'}
                         </span>
                       </td>
-                      <td className="p-3 max-w-[240px] truncate">
-                        <span className="text-slate-800 font-bold uppercase text-[11px] block">{particulars}</span>
-                        {tx.description && (
-                          <span className="text-[10px] text-slate-400 font-medium italic truncate mt-0.5 block">{tx.description}</span>
-                        )}
-                      </td>
-                      <td className="p-3 font-mono text-slate-500 text-[11px]">{tx.refNo || '—'}</td>
-                      <td className="p-3 text-right text-green-700 font-bold font-mono text-[11px]">
-                        {isDr ? formatCurrency(tx.debit) : '—'}
-                      </td>
-                      <td className="p-3 text-right text-red-600 font-bold font-mono text-[11px]">
-                        {isCr ? formatCurrency(tx.credit) : '—'}
-                      </td>
-                      <td className="p-3 text-right text-slate-800 font-bold font-mono text-[11px] whitespace-nowrap">
-                        {formatCurrency(Math.abs(tx.runningBalance))}
-                        <span className="text-[9px] text-slate-400 ml-1">
-                          {tx.runningBalance >= 0 ? 'Dr' : 'Cr'}
-                        </span>
-                      </td>
+                      <td className="p-3 text-center text-slate-400">—</td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
         ) : (
           <div className="space-y-2">
             {paginated.map((tx, i) => {
