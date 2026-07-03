@@ -151,8 +151,19 @@ export async function startCloudSync(companyId) {
 
       processing = false;
     }, (error) => {
-      console.error('[CloudSync] Listener error:', error.message);
+      // 400 Bad Request on Listen channel → usually transient (auth/permissions timing).
+      // Auto-retry after 5s instead of leaving the listener dead.
+      console.warn(`[CloudSync] Listener error: ${error.code || error.message}. Retrying in 5s...`);
       processing = false;
+
+      // Unsubscribe the dead listener and restart
+      if (unsubscribe) {
+        try { unsubscribe(); } catch {}
+        unsubscribe = null;
+      }
+      setTimeout(() => {
+        if (currentCompanyId) startCloudSync(currentCompanyId);
+      }, 5000);
     });
 
     console.log(`[CloudSync] ✅ Active`);

@@ -500,7 +500,7 @@ export default function DaybookLive({ subUser }) {
 
     try {
       setLoading(true)
-      await deleteVoucher(tx.id, pwd, subUser?.id, subUser?.name)
+      await deleteVoucher(tx.id, tx.collection)
 
       // Update cache in local storage first!
       try {

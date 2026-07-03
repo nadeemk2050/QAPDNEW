@@ -367,10 +367,23 @@ export async function deleteVoucher(voucherId, colName) {
 
   const companyId = getCurrentCompanyId()
   if (companyId) {
-    // Merge status with old document data to sync complete updated doc to cloud
+    // 1. Sync the updated doc (with deleted status) to cloud
     const fullDoc = oldVoucher ? { ...oldVoucher, ...deletedData } : deletedData
     await syncToCloud(companyId, collectionName, voucherId, fullDoc)
     markSelfSynced(companyId, voucherId)
+
+    // 2. ALSO delete the cloud document so ACCPRO's listener sees a 'removed' event
+    //    This ensures the voucher disappears from ACCPRO instantly
+    try {
+      const { collection: c, doc: d, deleteDoc: del } = await import('@firebase/firestore');
+      const livePath = `companies_live/${companyId}/records`;
+      const cloudDocRef = d(c(cloudDb, livePath), voucherId);
+      await del(cloudDocRef);
+      console.log(`[QAPD] ✅ Deleted from cloud: ${voucherId}`);
+    } catch (e) {
+      console.warn('[QAPD] Cloud delete error (non-fatal):', e.message);
+    }
+
     if (oldVoucher) {
       await writeLog('deleted', oldVoucher, oldVoucher.totalAmount || oldVoucher.amount || 0)
     }
