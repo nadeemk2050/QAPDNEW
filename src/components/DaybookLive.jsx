@@ -755,6 +755,18 @@ export default function DaybookLive({ subUser }) {
             }
           }
         }
+      } else {
+        if (filterType !== 'all') {
+          if (filterType === 'payments') {
+            if (t.type !== 'payments' || (t.subType !== 'out' && t.subType !== 'payment')) return false
+          } else if (filterType === 'receipts') {
+            if (t.type !== 'payments' || (t.subType !== 'in' && t.subType !== 'receipt')) return false
+          } else if (filterType === 'contra') {
+            if (t.type !== 'payments' || t.subType?.toLowerCase() !== 'contra') return false
+          } else {
+            if (t.type !== filterType) return false
+          }
+        }
       }
 
       if (!search) return true

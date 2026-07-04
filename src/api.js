@@ -81,11 +81,11 @@ export async function listLedgers() {
 
 // Helper to resolve Contra names from account ID if missing in document fields
 function resolveContraNames(data, ledgerList) {
-  let drName = data.toAccountName || data.drName || ''
+  let drName = data.toAccountName || data.drName || data.payments?.[0]?.ledgerName || ''
   let crName = data.accountName || data.crName || data.fromAccountName || ''
   
   if ((!drName || !crName) && ledgerList && ledgerList.length > 0) {
-    const resolvedDrId = data.toAccountId || data.partyId
+    const resolvedDrId = data.toAccountId || data.partyId || data.payments?.[0]?.ledgerId
     const resolvedCrId = data.fromAccountId || data.accountId
     
     if (!drName && resolvedDrId) {
@@ -184,7 +184,7 @@ export async function listTransactions(params = {}) {
           amount: Number(data.totalAmount || data.amount || 0),
           narration: data.narration || data.description || '',
           accountName: data.accountName || '',
-          partyName: data.partyName || (data.payments?.[0]?.ledgerName) || '',
+          partyName: subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || ''),
           drName,
           crName,
           syncTimestamp: data.lastModifiedAt?.seconds ? data.lastModifiedAt.seconds * 1000 : Date.now(),
@@ -526,7 +526,7 @@ export async function getAccountLedger(accountId, params = {}) {
             amount: Number(data.totalAmount || data.amount || 0),
             narration: data.narration || data.description || '',
             accountName: data.accountName || '',
-            partyName: data.partyName || (data.payments?.[0]?.ledgerName) || '',
+            partyName: subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || ''),
             drName,
             crName,
             collection: col
