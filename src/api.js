@@ -6,6 +6,7 @@ import { db, cloudDb } from './firebase';
 import { collection, query, where, getDocs, addDoc, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getCurrentCompanyId, getDB } from './localDB';
 import { markSelfSynced } from './cloudSync';
+import { v4 as uuidv4 } from 'uuid';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 const STORAGE_KEYS = {
@@ -132,7 +133,7 @@ export async function listTransactions(params = {}) {
       const snap = await getDocs(q)
       snap.docs.forEach(d => {
         const data = d.data()
-        if (data.deleted || data.status === 'deleted') return
+        if (data.deleted || data.status === 'deleted' || data.isDeleted) return
         const typeMap = { out: 'Payment', in: 'Receipt', contra: 'Contra', purchase: 'Purchase', sales: 'Sales', journal: 'Journal', manufacturing: 'Manufacturing', stock_journal: 'Stock Journal' }
         const typeLower = (data.type || '').toLowerCase()
         const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
@@ -278,15 +279,25 @@ async function syncToCloud(companyId, collectionName, docId, docData) {
     const now = Date.now();
     const cloudDocRef = d(c(cloudDb, livePath), docId);
 
+    const isDeleted = docData && (docData.deleted || docData.isDeleted || docData.status === 'DELETED' || docData.status === 'deleted');
+
     // Write document matching ACCPRO's exact format
-    await s(cloudDocRef, {
+    const writeData = {
       id: docId,
       collectionName,
       data: docData,           // business data (same as ACCPRO's RxDB data field)
       timestamp: now,
       lastSync: now,
       syncTimestamp: now       // ⬅️ CRITICAL: ACCPRO pulls docs where syncTimestamp > lastPullTs
-    }, { merge: true });
+    };
+
+    if (isDeleted) {
+      writeData.deleted = true;
+      writeData.isDeleted = true;
+      writeData.status = 'DELETED';
+    }
+
+    await s(cloudDocRef, writeData, { merge: true });
 
     // Verify the write by reading it back
     const verify = await g(cloudDocRef);
@@ -318,7 +329,7 @@ export async function getVoucher(voucherId) {
       const snap = await getDocs(query(collection(db, col)))
       const found = snap.docs.find(d => d.id === voucherId)
       if (found) {
-        return { success: true, voucher: { id: found.id, ...found.data() } }
+        return { success: true, voucher: { id: found.id, collectionName: col, ...found.data() } }
       }
     }
   } catch {}
@@ -328,23 +339,43 @@ export async function getVoucher(voucherId) {
 export async function updateVoucher(voucherId, data) {
   // Fetch old doc to get old amount and refNo/type for logging
   let oldVoucher = null
+  let colName = 'payments'
   try {
     const res = await getVoucher(voucherId)
-    if (res.success) oldVoucher = res.voucher
+    if (res.success) {
+      oldVoucher = res.voucher
+      colName = res.collectionName || colName
+    }
   } catch (e) {}
 
-  const docRef = doc(db, 'payments', voucherId)
-  const updatedData = { ...data, updatedAt: Date.now() }
+  // Recalculate totalAmount from payments array if present, otherwise fallback to provided amount fields
+  let totalAmount = parseFloat(data.totalAmount || data.amount || 0)
+  if (data.payments && Array.isArray(data.payments)) {
+    totalAmount = data.payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  }
+
+  const docRef = doc(db, colName, voucherId)
+  const updatedData = { 
+    ...data, 
+    amount: totalAmount, 
+    totalAmount: totalAmount, 
+    updatedAt: Date.now() 
+  }
   await setDoc(docRef, updatedData, { merge: true })
 
   // Sync to cloud
   const companyId = getCurrentCompanyId()
   if (companyId) {
-    await syncToCloud(companyId, 'payments', voucherId, updatedData)
+    // Retrieve fully merged local document to ensure all fields (including userId) are synced
+    const fullDocRes = await getVoucher(voucherId)
+    const fullDoc = fullDocRes.success ? fullDocRes.voucher : { ...oldVoucher, ...updatedData }
+    
+    // Strip metadata from the nested data object
+    const { id: _, collectionName: __, ...syncDocData } = fullDoc
+    
+    await syncToCloud(companyId, colName, voucherId, syncDocData)
     markSelfSynced(companyId, voucherId)
-    if (oldVoucher) {
-      await writeLog('edited', updatedData, oldVoucher.totalAmount || oldVoucher.amount || 0)
-    }
+    await writeLog('edited', syncDocData, oldVoucher?.totalAmount || oldVoucher?.amount || 0)
   }
 
   // Clear daybook cache
@@ -360,33 +391,38 @@ export async function deleteVoucher(voucherId, colName) {
     if (res.success) oldVoucher = res.voucher
   } catch (e) {}
 
-  const collectionName = colName || 'payments'
+  const collectionName = colName || oldVoucher?.collectionName || 'payments'
   const docRef = doc(db, collectionName, voucherId)
-  const deletedData = { status: 'deleted', deletedAt: Date.now(), deleted: true }
+  const deletedData = { status: 'DELETED', deletedAt: Date.now(), deleted: true, isDeleted: true }
   await updateDoc(docRef, deletedData)
 
   const companyId = getCurrentCompanyId()
   if (companyId) {
-    // 1. Sync the updated doc (with deleted status) to cloud
+    // ⭐ Step 1: Sync deleted status via syncToCloud (same pattern as addPayment)
     const fullDoc = oldVoucher ? { ...oldVoucher, ...deletedData } : deletedData
-    await syncToCloud(companyId, collectionName, voucherId, fullDoc)
+    
+    // Strip metadata from the nested data object
+    const { id: _, collectionName: __, ...syncDocData } = fullDoc
+    
+    await syncToCloud(companyId, collectionName, voucherId, syncDocData)
     markSelfSynced(companyId, voucherId)
 
-    // 2. ALSO delete the cloud document so ACCPRO's listener sees a 'removed' event
-    //    This ensures the voucher disappears from ACCPRO instantly
+    // ⭐ Step 2: ACCPRO's liveSync processes deletions by detecting the status: 'deleted' / deleted: true
+    //    fields on the synced records. We keep the cloud document with these fields intact
+    //    so offline or polling devices can fetch the deleted status when they sync.
+    /*
     try {
       const { collection: c, doc: d, deleteDoc: del } = await import('@firebase/firestore');
-      const livePath = `companies_live/${companyId}/records`;
-      const cloudDocRef = d(c(cloudDb, livePath), voucherId);
+      const cloudDocRef = d(c(cloudDb, `companies_live/${companyId}/records`), voucherId);
       await del(cloudDocRef);
-      console.log(`[QAPD] ✅ Deleted from cloud: ${voucherId}`);
+      console.log(`[QAPD] ✅ Cloud doc removed: ${voucherId}`);
     } catch (e) {
-      console.warn('[QAPD] Cloud delete error (non-fatal):', e.message);
+      // This is non-fatal — syncToCloud already wrote the deleted status
+      console.warn('[QAPD] Cloud doc removal (non-fatal):', e.message);
     }
+    */
 
-    if (oldVoucher) {
-      await writeLog('deleted', oldVoucher, oldVoucher.totalAmount || oldVoucher.amount || 0)
-    }
+    await writeLog('deleted', oldVoucher || syncDocData, oldVoucher?.totalAmount || oldVoucher?.amount || 0)
   }
 
   // Clear daybook cache
@@ -428,7 +464,7 @@ export async function getAccountLedger(accountId, params = {}) {
       const snap = await getDocs(q)
       snap.docs.forEach(d => {
         const data = d.data()
-        if (data.deleted || data.status === 'deleted') return
+        if (data.deleted || data.status === 'deleted' || data.isDeleted) return
         
         const accLower = (accountId || '').trim().toLowerCase()
         const isMatch = data.accountId === accountId || 
@@ -509,7 +545,12 @@ export async function listContra(params = {}) {
   try {
     const q = query(collection(db, 'payments'), where('userId', '==', companyId), where('type', '==', 'contra'))
     const snap = await getDocs(q)
-    const txns = snap.docs.map(d => {
+    const txns = snap.docs
+      .filter(d => {
+        const data = d.data();
+        return !data.deleted && data.status !== 'deleted' && !data.isDeleted;
+      })
+      .map(d => {
       const data = d.data()
       return {
         id: d.id,
@@ -546,27 +587,28 @@ export async function writeLog(action, voucher, oldValue = null) {
   // Format: "USERNAME (QAPD)" — ACCPRO displays this in "Added/Edited By" column
   const userStr = `${name} (QAPD)`
 
-  const vchType = voucher.type || 'payment'
-  const vchRef = voucher.refNo || '—'
+  const vchType = voucher?.type || 'payment'
+  const vchRef = voucher?.refNo || '—'
   const docName = `Voucher: ${vchType} (${vchRef})`
   
   const logData = {
     docName,
     refNo: vchRef,
-    voucherDate: voucher.date || '',
+    voucherDate: voucher?.date || '',
     oldValue: oldValue ? formatCurrencyForLog(oldValue) : '—',
-    newValue: formatCurrencyForLog(voucher.totalAmount || voucher.amount || 0),
+    newValue: formatCurrencyForLog(voucher?.totalAmount || voucher?.amount || 0),
     userEmail: userStr,       // Displayed in "Added/Edited By" column
     userName: name,           // Clean name for ACCPRO parsing
     source: 'QAPD',           // Explicit marker — ACCPRO uses this to show QAPD badge
     sourceApp: 'QAPD',        // Same as source, for compatibility
     status: action.toUpperCase(), // 'CREATED', 'EDITED', 'DELETED'
     timestamp: Date.now(),
-    date: new Date().toISOString().split('T')[0]
+    date: new Date().toISOString().split('T')[0],
+    userId: companyId         // ⬅️ CRITICAL: AccPro filters/queries logs locally by userId
   }
 
   // 1. Save log to local database (audit_logs collection)
-  const logId = 'log_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now()
+  const logId = uuidv4()
   const colRef = collection(db, 'audit_logs')
   await setDoc(doc(colRef, logId), logData)
 
@@ -579,7 +621,9 @@ export async function writeLog(action, voucher, oldValue = null) {
     const cloudDocRef = d(c(cloudDb, livePath), logId);
     await s(cloudDocRef, {
       ...logData,            // Fields at top level: docName, refNo, userEmail, status, etc.
+      id: logId,
       collectionName: 'audit_logs',
+      data: logData,         // Nested data map for ACCPRO's standard liveSync puller
       timestamp: now,
       syncTimestamp: now
     }, { merge: true });

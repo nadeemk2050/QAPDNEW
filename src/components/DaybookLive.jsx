@@ -1565,16 +1565,14 @@ export default function DaybookLive({ subUser }) {
                 Share
               </button>
               
-              {(selectedTx.type?.toLowerCase() === 'payment' || selectedTx.subType === 'payment' || selectedTx.subType === 'out') && (
+              {['payment', 'receipt', 'contra'].includes(selectedTx.subType?.toLowerCase() || selectedTx.type?.toLowerCase()) && (
                 <>
-                  {selectedTx.createdBy && subUser && selectedTx.createdBy === subUser.id && (
-                    <button
-                      onClick={() => { navigate('/voucher/edit/' + selectedTx.id); setSelectedTx(null); }}
-                      className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-colors"
-                    >
-                      Edit
-                    </button>
-                  )}
+                  <button
+                    onClick={() => { navigate('/voucher/edit/' + selectedTx.id); setSelectedTx(null); }}
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-colors"
+                  >
+                    Edit
+                  </button>
                   <button
                     onClick={() => { 
                       if (window.confirm("Are you sure you want to delete this voucher?")) {

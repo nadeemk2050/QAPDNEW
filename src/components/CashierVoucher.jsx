@@ -157,14 +157,15 @@ export default function CashierVoucher({ subUser }) {
         const res = await getVoucher(voucherId)
         if (res.success && res.voucher) {
           const v = res.voucher
-          setType(v.type)
+          const resolvedType = v.type === 'in' ? 'receipt' : v.type === 'out' ? 'payment' : v.type
+          setType(resolvedType)
           setDate(v.date)
           setRefNo(v.refNo)
           originalRefNo.current = v.refNo
           setAccountId(v.accountId)
           setNarration(v.narration || '')
 
-          if (v.type === 'contra') {
+          if (resolvedType === 'contra') {
             setToAccountId(v.toAccountId)
             setRows([{ ledgerId: '', ledgerCollection: 'parties', amount: String(v.amount), narration: '' }])
           } else {
