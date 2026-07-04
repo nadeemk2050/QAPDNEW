@@ -252,7 +252,9 @@ export async function addContra(data) {
     userId: companyId,
     createdAt: Date.now(),
     status: 'active',
-    partyName: data.partyName || ''
+    partyName: data.partyName || `${data.accountName || ''} → ${data.toAccountName || ''}`,
+    drName: data.toAccountName || '',
+    crName: data.accountName || ''
   }
 
   // 1. Save to local RxDB

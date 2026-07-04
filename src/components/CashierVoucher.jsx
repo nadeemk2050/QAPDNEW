@@ -289,14 +289,22 @@ export default function CashierVoucher({ subUser }) {
     try {
       if (isEditMode) {
         if (type === 'contra') {
+          const fromAccName = getAccountName(accountId)
+          const toAccName = getAccountName(toAccountId)
           await updateVoucher(voucherId, {
             accountId,
+            fromAccountId: accountId,
             toAccountId,
             amount: totalAmount,
             date,
             narration,
             refNo,
             type: 'contra',
+            accountName: fromAccName,
+            toAccountName: toAccName,
+            drName: toAccName,
+            crName: fromAccName,
+            partyName: `${fromAccName} → ${toAccName}`,
             subUserId: subUser?.id,
             userName: subUser?.name
           })

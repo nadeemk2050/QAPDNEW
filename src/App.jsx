@@ -187,9 +187,7 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard company={company} subUser={subUser} />} />
         <Route path="/daybook" element={<DaybookLive subUser={subUser} />} />
         <Route path="/register" element={<CashBankRegister />} />
-        <Route path="/register/payment" element={<VoucherRegister />} />
-        <Route path="/register/receipt" element={<VoucherRegister />} />
-        <Route path="/register/contra" element={<VoucherRegister />} />
+        <Route path="/register/:voucherType" element={<VoucherRegister />} />
         <Route path="/profile" element={<Profile company={company} subUser={subUser} onRefresh={refreshCompany} />} />
         <Route path="/voucher/edit/:voucherId" element={<CashierVoucher subUser={subUser} />} />
         <Route path="/voucher/:voucherType" element={<CashierVoucher subUser={subUser} />} />

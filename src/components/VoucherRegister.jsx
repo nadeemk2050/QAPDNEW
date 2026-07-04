@@ -71,8 +71,6 @@ export default function VoucherRegister() {
         return
       }
 
-      const tenDaysAgo = getDaysAgoStr(10)
-
       const allPayments = await companyDB.offline_records.find({
         selector: { collectionName: 'payments' }
       }).exec()
@@ -84,8 +82,6 @@ export default function VoucherRegister() {
           if (data.deleted || data.status === 'deleted') return false
           // Filter by voucher type
           if (data.type !== config.subType) return false
-          // Filter by last 10 days
-          if (!data.date || data.date < tenDaysAgo) return false
           return true
         })
         .map(d => {
@@ -140,7 +136,7 @@ export default function VoucherRegister() {
               <h2 className="text-lg font-bold text-slate-800">{config.label}</h2>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Last 10 days · {transactions.length} transactions
+              All Vouchers · {transactions.length} transactions
             </p>
           </div>
         </div>
@@ -169,7 +165,7 @@ export default function VoucherRegister() {
         <div className="card p-3 text-center bg-indigo-50 border-indigo-100">
           <p className="text-[10px] font-bold text-indigo-600 uppercase">Avg/Day</p>
           <p className="text-xl font-black text-indigo-800">
-            {formatCurrency(transactions.length > 0 ? transactions.reduce((s, t) => s + t.amount, 0) / Math.min(10, transactions.length) : 0)}
+            {formatCurrency(transactions.length > 0 ? transactions.reduce((s, t) => s + t.amount, 0) / (new Set(transactions.map(t => t.date)).size || 1) : 0)}
           </p>
         </div>
       </div>
@@ -190,7 +186,7 @@ export default function VoucherRegister() {
       ) : pageTxns.length === 0 ? (
         <div className="text-center py-12 text-slate-400">
           <FileText size={36} className="mx-auto mb-2 opacity-30" />
-          <p className="text-sm font-medium">No {voucherType} vouchers found in last 10 days</p>
+          <p className="text-sm font-medium">No {voucherType} vouchers found</p>
           <p className="text-xs mt-1">Create a {voucherType} voucher to see it here</p>
         </div>
       ) : (

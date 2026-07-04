@@ -133,14 +133,7 @@ export default function CashBankRegister() {
       const data = await getAccountLedger(acc.id)
       const allTxns = data.transactions || []
 
-      const tenDaysAgo = getDaysAgoStr(10)
-
       const txns = allTxns
-        .filter(t => {
-          // Filter by last 10 days
-          if (!t.date || t.date < tenDaysAgo) return false
-          return true
-        })
         .map(t => {
           const typeLabel = t.subType === 'payment' || t.subType === 'out' ? 'Payment' : 
                             t.subType === 'receipt' || t.subType === 'in' ? 'Receipt' : 
@@ -224,7 +217,7 @@ export default function CashBankRegister() {
             </button>
             <div>
               <h2 className="text-lg font-bold text-slate-800 uppercase">{selectedAccount.name}</h2>
-              <p className="text-xs text-slate-500">Account Ledger — Last 10 days · {ledgerTxns.length} transactions</p>
+              <p className="text-xs text-slate-500">Account Ledger · {ledgerTxns.length} transactions</p>
             </div>
           </div>
           <button onClick={() => openAccountLedger(selectedAccount)} className="btn-secondary text-xs" disabled={ledgerLoading}>
