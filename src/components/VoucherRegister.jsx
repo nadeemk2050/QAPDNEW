@@ -103,7 +103,7 @@ export default function VoucherRegister() {
       }
 
       const ledgerDocs = await companyDB.offline_records.find({
-        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts'] } }
+        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts', 'capital_accounts', 'asset_accounts', 'ledgers'] } }
       }).exec()
       const ledgerList = ledgerDocs.map(ld => {
         const r = ld.toJSON()
@@ -155,9 +155,12 @@ export default function VoucherRegister() {
               crName = ledgerList.find(l => l.id === firstPaymentId)?.name || ''
             }
           } else if (subType === 'contra') {
-            drName = data.toAccountName || data.drName || ''
-            if (!drName && data.toAccountId) {
-              drName = ledgerList.find(l => l.id === data.toAccountId)?.name || ''
+            drName = data.toAccountName || data.drName || (data.splits && data.splits.length > 0 ? (data.splits[0].targetName || data.splits[0].name) : '') || (data.payments && data.payments.length > 0 ? (data.payments[0].ledgerName || data.payments[0].name) : '') || ''
+            if (!drName) {
+              const targetId = data.toAccountId || data.splits?.[0]?.targetId || data.splits?.[0]?.id || data.payments?.[0]?.ledgerId
+              if (targetId) {
+                drName = ledgerList.find(l => l.id === targetId)?.name || ''
+              }
             }
             crName = data.accountName || data.crName || data.fromAccountName || ''
             if (!crName && (data.fromAccountId || data.accountId)) {

@@ -166,8 +166,9 @@ export default function CashierVoucher({ subUser }) {
           setNarration(v.narration || '')
 
           if (resolvedType === 'contra') {
-            setToAccountId(v.toAccountId)
-            setRows([{ ledgerId: '', ledgerCollection: 'parties', amount: String(v.amount), narration: '' }])
+            setToAccountId(v.toAccountId || v.splits?.[0]?.targetId || v.splits?.[0]?.id || v.payments?.[0]?.ledgerId || '')
+            const targetAmt = v.totalAmount || v.amount || v.splits?.[0]?.amount || v.payments?.[0]?.amount || 0
+            setRows([{ ledgerId: '', ledgerCollection: 'parties', amount: String(targetAmt), narration: '' }])
           } else {
             setRows(v.payments.map(p => ({
               ledgerId: p.ledgerId,

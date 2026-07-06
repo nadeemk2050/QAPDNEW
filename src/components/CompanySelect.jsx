@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Building2, DownloadCloud, HardDrive, RefreshCw, Loader2, Search, AlertCircle, LogOut } from 'lucide-react';
-import { getMasterDB, setCurrentCompanyId, getDB } from '../localDB';
+import { Building2, DownloadCloud, HardDrive, RefreshCw, Loader2, Search, AlertCircle, LogOut, Trash2 } from 'lucide-react';
+import { getMasterDB, setCurrentCompanyId, getDB, deleteLocalCompany } from '../localDB';
 import { auth, cloudDb } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, getDocs, onSnapshot } from '@firebase/firestore';
@@ -97,6 +97,27 @@ export default function CompanySelect({ user, onSelectCompany, onLogout }) {
     onSelectCompany(company);
   };
 
+  const handleDeleteClick = async (company) => {
+    const pwd = prompt(`Enter password to delete local offline data for "${company.name}":`);
+    if (pwd === null) return;
+    if (pwd !== 'abcd') {
+      alert('Incorrect password!');
+      return;
+    }
+    if (confirm(`Are you sure you want to permanently delete all local offline data for "${company.name}"? This action cannot be undone.`)) {
+      setSyncing(true);
+      try {
+        await deleteLocalCompany(company.id);
+        await loadLocalCompanies();
+      } catch (err) {
+        console.error('Failed to delete company data:', err);
+        alert('Failed to delete company data: ' + err.message);
+      } finally {
+        setSyncing(false);
+      }
+    }
+  };
+
   const handleDownloadFromCloud = async (company) => {
     setSyncing(true);
     try {
@@ -133,7 +154,11 @@ export default function CompanySelect({ user, onSelectCompany, onLogout }) {
             const data = docSnap.data();
             const colName = data.collectionName || 'unknown';
             const docId = data.id || docSnap.id;
-            const docData = data.data || {};
+            let docData = data.data;
+            if (!docData || Object.keys(docData).length === 0) {
+              const { id: dummyId, collectionName: dummyCol, timestamp: dummyTs, lastSync: dummyLs, syncTimestamp: dummySts, ...business } = data;
+              docData = business;
+            }
 
             await companyDB.offline_records.upsert({
               id: docId,
@@ -258,12 +283,12 @@ export default function CompanySelect({ user, onSelectCompany, onLogout }) {
 
             {/* Local companies */}
             {selectedTab === 'local' && filterList(localCompanies).map(company => (
-              <button
+              <div
                 key={company.id}
                 onClick={() => handleSelectLocal(company)}
-                className="w-full text-left p-3.5 rounded-xl bg-white/10 border border-white/10 hover:bg-white/15 hover:border-indigo-500/50 transition-all group"
+                className="w-full text-left p-3.5 rounded-xl bg-white/10 border border-white/10 hover:bg-white/15 hover:border-indigo-500/50 transition-all group flex items-center justify-between cursor-pointer"
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shrink-0">
                     <Building2 size={18} className="text-white" />
                   </div>
@@ -271,9 +296,21 @@ export default function CompanySelect({ user, onSelectCompany, onLogout }) {
                     <p className="text-white text-sm font-bold truncate">{company.name}</p>
                     <p className="text-indigo-300 text-[10px]">Local — Tap to open</p>
                   </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteClick(company);
+                    }}
+                    className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all z-10"
+                    title="Delete local data"
+                  >
+                    <Trash2 size={16} />
+                  </button>
                   <HardDrive size={16} className="text-indigo-400/30 group-hover:text-indigo-400 transition-colors" />
                 </div>
-              </button>
+              </div>
             ))}
 
             {/* Cloud companies */}

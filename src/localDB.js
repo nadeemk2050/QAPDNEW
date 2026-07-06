@@ -162,3 +162,27 @@ export const loadCompanyDataFromSnapshot = (collectionName, documents) => {
     // Handles data from onSnapshot or getDocs
     return documents.map(d => ({ id: d.id, ...d.data() }));
 };
+
+export const deleteLocalCompany = async (companyId) => {
+    if (currentCompanyId === companyId) {
+        setCurrentCompanyId(null);
+    }
+    const masterDB = await getMasterDB();
+    const existing = await masterDB.company_registry.findOne({ selector: { id: companyId } }).exec();
+    if (existing) {
+        await existing.remove();
+    }
+    const dbName = `nadtally_company_${companyId}`;
+    try {
+        const { removeRxDatabase } = await import('rxdb');
+        await removeRxDatabase(dbName, getRxStorageDexie());
+    } catch (e) {
+        console.warn(`Failed to remove RxDB database ${dbName}:`, e.message);
+    }
+    try {
+        localStorage.removeItem('quickaccpro_cached_transactions');
+        localStorage.removeItem('quickaccpro_cached_accounts');
+        localStorage.removeItem('quickaccpro_cached_ledgers');
+    } catch {}
+};
+

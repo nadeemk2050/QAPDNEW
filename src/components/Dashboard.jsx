@@ -90,8 +90,8 @@ export default function Dashboard({ company, subUser }) {
             }
           } else if (isCrMatch) {
             isCr = true
-            if (t.isMulti && t.splits && t.type === 'journal_vouchers') {
-              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower && s.type === 'cr')
+            if (t.isMulti && t.splits) {
+              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower)
               if (matchedSplit) {
                 amt = Number(matchedSplit.amount || 0)
               }

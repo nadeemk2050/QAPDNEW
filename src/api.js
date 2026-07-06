@@ -57,7 +57,7 @@ export async function listLedgers() {
   const companyId = getCurrentCompanyId()
   if (!companyId) return { ledgers: [] }
   try {
-    const collections = ['parties', 'accounts', 'expenses', 'income_accounts']
+    const collections = ['parties', 'accounts', 'expenses', 'income_accounts', 'capital_accounts', 'asset_accounts', 'ledgers']
     const results = []
     for (const col of collections) {
       const q = query(collection(db, col), where('userId', '==', companyId))
@@ -81,11 +81,11 @@ export async function listLedgers() {
 
 // Helper to resolve Contra names from account ID if missing in document fields
 function resolveContraNames(data, ledgerList) {
-  let drName = data.toAccountName || data.drName || data.payments?.[0]?.ledgerName || ''
+  let drName = data.toAccountName || data.drName || data.payments?.[0]?.ledgerName || (data.splits && data.splits.length > 0 ? (data.splits[0].targetName || data.splits[0].name) : '') || ''
   let crName = data.accountName || data.crName || data.fromAccountName || ''
   
   if ((!drName || !crName) && ledgerList && ledgerList.length > 0) {
-    const resolvedDrId = data.toAccountId || data.partyId || data.payments?.[0]?.ledgerId
+    const resolvedDrId = data.toAccountId || data.partyId || data.payments?.[0]?.ledgerId || data.splits?.[0]?.targetId || data.splits?.[0]?.id
     const resolvedCrId = data.fromAccountId || data.accountId
     
     if (!drName && resolvedDrId) {
@@ -104,6 +104,50 @@ function resolveLedgerName(id, ledgerList) {
   return ledger ? ledger.name : ''
 }
 
+function resolveSplits(data, colName, ledgerList) {
+  const typeLower = (data.type || '').toLowerCase()
+  const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
+
+  if (colName === 'journal_vouchers') {
+    if (data.rows && Array.isArray(data.rows)) {
+      return data.rows.map(r => ({
+        targetId: r.id,
+        targetName: resolveLedgerName(r.id, ledgerList),
+        amount: Number(r.amount || 0),
+        type: r.type
+      }))
+    }
+  }
+
+  if (data.splits && Array.isArray(data.splits)) {
+    return data.splits.map(s => {
+      const targetId = s.targetId || s.id || s.partyId || s.ledgerId || s.accountId || s.expenseId || s.incomeId || s.capitalId || s.assetId
+      const defaultType = (subType === 'receipt') ? 'cr' : 'dr'
+      return {
+        targetId,
+        targetName: s.targetName || s.name || s.ledgerName || resolveLedgerName(targetId, ledgerList),
+        amount: Number(s.amount || 0),
+        type: s.type || defaultType
+      }
+    })
+  }
+
+  if (data.payments && Array.isArray(data.payments)) {
+    return data.payments.map(p => {
+      const targetId = p.ledgerId || p.id
+      const defaultType = (subType === 'receipt') ? 'cr' : 'dr'
+      return {
+        targetId,
+        targetName: p.ledgerName || resolveLedgerName(targetId, ledgerList),
+        amount: Number(p.amount || 0),
+        type: p.type || defaultType
+      }
+    })
+  }
+
+  return null
+}
+
 // ─── Transactions / Daybook ─────────────────────────────────────────────────
 
 export async function listTransactions(params = {}) {
@@ -114,7 +158,7 @@ export async function listTransactions(params = {}) {
     let ledgerList = []
     if (companyDB?.offline_records) {
       const ledgerDocs = await companyDB.offline_records.find({
-        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts'] } }
+        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts', 'capital_accounts', 'asset_accounts', 'ledgers'] } }
       }).exec()
       ledgerList = ledgerDocs.map(d => {
         const r = d.toJSON()
@@ -171,6 +215,24 @@ export async function listTransactions(params = {}) {
             }
             console.log('[QAPD] listTransactions Contra resolved data:', { drName, crName, data })
           }
+        } else if (col === 'journal_vouchers') {
+          if (data.isMulti && data.rows && data.rows.length > 0) {
+            const drRows = data.rows.filter(r => r.type === 'dr')
+            const crRows = data.rows.filter(r => r.type === 'cr')
+            if (drRows.length > 1) {
+              drName = 'Multiple'
+            } else if (drRows.length === 1) {
+              drName = resolveLedgerName(drRows[0].id, ledgerList)
+            }
+            if (crRows.length > 1) {
+              crName = 'Multiple'
+            } else if (crRows.length === 1) {
+              crName = resolveLedgerName(crRows[0].id, ledgerList)
+            }
+          } else {
+            drName = data.drName || resolveLedgerName(data.drId, ledgerList) || ''
+            crName = data.crName || resolveLedgerName(data.crId, ledgerList) || ''
+          }
         }
 
         allTxns.push({
@@ -184,9 +246,11 @@ export async function listTransactions(params = {}) {
           amount: Number(data.totalAmount || data.amount || 0),
           narration: data.narration || data.description || '',
           accountName: data.accountName || '',
-          partyName: subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || ''),
+          partyName: col === 'journal_vouchers' ? `${drName || '—'} / ${crName || '—'}` : (subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || '')),
           drName,
           crName,
+          splits: resolveSplits(data, col, ledgerList),
+          isMulti: data.isMulti || false,
           syncTimestamp: data.lastModifiedAt?.seconds ? data.lastModifiedAt.seconds * 1000 : Date.now(),
           status: data.status || 'active'
         })
@@ -447,7 +511,7 @@ export async function getAccountLedger(accountId, params = {}) {
     let ledgerList = []
     if (companyDB?.offline_records) {
       const ledgerDocs = await companyDB.offline_records.find({
-        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts'] } }
+        selector: { collectionName: { $in: ['parties', 'accounts', 'expenses', 'income_accounts', 'capital_accounts', 'asset_accounts', 'ledgers'] } }
       }).exec()
       ledgerList = ledgerDocs.map(d => {
         const r = d.toJSON()
@@ -469,15 +533,27 @@ export async function getAccountLedger(accountId, params = {}) {
         if (data.deleted || data.status === 'deleted' || data.isDeleted) return
         
         const accLower = (accountId || '').trim().toLowerCase()
-        const isMatch = data.accountId === accountId || 
-                        data.partyId === accountId || 
-                        data.id === accountId || 
-                        data.toAccountId === accountId ||
-                        (data.accountName || '').trim().toLowerCase() === accLower ||
-                        (data.partyName || '').trim().toLowerCase() === accLower ||
-                        (data.toAccountName || '').trim().toLowerCase() === accLower;
+        const unifiedSplits = resolveSplits(data, col, ledgerList)
+        
+        let isMatch = data.accountId === accountId || 
+                      data.partyId === accountId || 
+                      data.id === accountId || 
+                      data.toAccountId === accountId ||
+                      (data.accountName || '').trim().toLowerCase() === accLower ||
+                      (data.partyName || '').trim().toLowerCase() === accLower ||
+                      (data.toAccountName || '').trim().toLowerCase() === accLower;
 
-        // Match if accountId, partyId, or name matches
+        if (!isMatch && unifiedSplits && unifiedSplits.length > 0) {
+          isMatch = unifiedSplits.some(s => s.targetId === accountId);
+          if (!isMatch && ledgerList && ledgerList.length > 0) {
+            const activeLedger = ledgerList.find(l => l.id === accountId);
+            if (activeLedger) {
+              const activeNameLower = activeLedger.name.trim().toLowerCase();
+              isMatch = unifiedSplits.some(s => (s.targetName || '').trim().toLowerCase() === activeNameLower);
+            }
+          }
+        }
+
         if (isMatch) {
           const typeLower = (data.type || '').toLowerCase()
           const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
@@ -515,6 +591,24 @@ export async function getAccountLedger(accountId, params = {}) {
               }
               console.log('[QAPD] getAccountLedger Contra resolved data:', { drName, crName, data })
             }
+          } else if (col === 'journal_vouchers') {
+            if (data.isMulti && data.rows && data.rows.length > 0) {
+              const drRows = data.rows.filter(r => r.type === 'dr')
+              const crRows = data.rows.filter(r => r.type === 'cr')
+              if (drRows.length > 1) {
+                drName = 'Multiple'
+              } else if (drRows.length === 1) {
+                drName = resolveLedgerName(drRows[0].id, ledgerList)
+              }
+              if (crRows.length > 1) {
+                crName = 'Multiple'
+              } else if (crRows.length === 1) {
+                crName = resolveLedgerName(crRows[0].id, ledgerList)
+              }
+            } else {
+              drName = data.drName || resolveLedgerName(data.drId, ledgerList) || ''
+              crName = data.crName || resolveLedgerName(data.crId, ledgerList) || ''
+            }
           }
 
           allTxns.push({
@@ -526,9 +620,11 @@ export async function getAccountLedger(accountId, params = {}) {
             amount: Number(data.totalAmount || data.amount || 0),
             narration: data.narration || data.description || '',
             accountName: data.accountName || '',
-            partyName: subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || ''),
+            partyName: col === 'journal_vouchers' ? `${drName || '—'} / ${crName || '—'}` : (subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || '')),
             drName,
             crName,
+            splits: resolveSplits(data, col, ledgerList),
+            isMulti: data.isMulti || false,
             collection: col
           })
         }
