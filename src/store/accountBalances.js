@@ -100,10 +100,6 @@ export async function refreshAllBalances() {
       const net = ledgerNetBalance(txns, acc.name)
       balanceCache.set(acc.id, net)
       results[acc.id] = net
-      // Debug: log first account's details
-      if (accounts.indexOf(acc) === 0) {
-        console.log(`[BalanceStore] ${acc.name}: ${txns.length} txns, totalDr=${txns.reduce((s,t)=>{const st=(t.subType||'').toLowerCase();return s+(st==='receipt'||st==='in'?Number(t.amount||0):0)},0)}, totalCr=${txns.reduce((s,t)=>{const st=(t.subType||'').toLowerCase();return s+(st==='payment'||st==='out'?Number(t.amount||0):0)},0)}, net=${net}`)
-      }
     } catch (e) {
       console.warn(`[BalanceStore] Ledger fetch failed for ${acc.name}:`, e)
       const fallback = Number(acc.openingBalance || acc.balance || 0)

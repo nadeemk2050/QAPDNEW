@@ -6,7 +6,6 @@ import { db, cloudDb } from './firebase';
 import { collection, query, where, getDocs, addDoc, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { getCurrentCompanyId, getDB } from './localDB';
 import { markSelfSynced } from './cloudSync';
-import { v4 as uuidv4 } from 'uuid';
 
 // ─── Storage keys ────────────────────────────────────────────────────────────
 const STORAGE_KEYS = {
@@ -308,8 +307,6 @@ export async function addPayment(data) {
   // 2. Push to cloud (real Firestore) for cross-device sync
   await syncToCloud(companyId, 'payments', voucherId, docData)
   markSelfSynced(companyId, voucherId)
-  await writeLog('created', docData)
-
   return { success: true, id: voucherId }
 }
 
@@ -363,8 +360,6 @@ export async function addContra(data) {
   // 2. Push to cloud
   await syncToCloud(companyId, 'payments', voucherId, docData)
   markSelfSynced(companyId, voucherId)
-  await writeLog('created', docData)
-
   return { success: true, id: voucherId }
 }
 
@@ -396,9 +391,6 @@ async function syncToCloud(companyId, collectionName, docId, docData) {
 
     await s(cloudDocRef, writeData, { merge: true });
 
-    // Verify the write by reading it back
-    const verify = await g(cloudDocRef);
-    console.log(`[QAPD] ✅ Synced to cloud: companies_live/${companyId}/records/${docId} (exists: ${verify.exists()})`);
   } catch (e) {
     console.warn('[QAPD] Cloud sync error:', e.message);
   }
@@ -472,7 +464,6 @@ export async function updateVoucher(voucherId, data) {
     
     await syncToCloud(companyId, colName, voucherId, syncDocData)
     markSelfSynced(companyId, voucherId)
-    await writeLog('edited', syncDocData, oldVoucher?.totalAmount || oldVoucher?.amount || 0)
   }
 
   // Clear daybook cache
@@ -519,7 +510,6 @@ export async function deleteVoucher(voucherId, colName) {
     }
     */
 
-    await writeLog('deleted', oldVoucher || syncDocData, oldVoucher?.totalAmount || oldVoucher?.amount || 0)
   }
 
   // Clear daybook cache
@@ -754,71 +744,6 @@ export async function listContra(params = {}) {
   }
 }
 
-// ─── System Logs ─────────────────────────────────────────────────────────────
-
-export async function writeLog(action, voucher, oldValue = null) {
-  const companyId = getCurrentCompanyId()
-  if (!companyId) return
-
-  const subUser = getStoredSubUser()
-  const name = subUser ? (subUser.name || subUser.username || 'User') : 'Admin'
-  // Format: "USERNAME (QAPD)" — ACCPRO displays this in "Added/Edited By" column
-  const userStr = `${name} (QAPD)`
-
-  const vchType = voucher?.type || 'payment'
-  const vchRef = voucher?.refNo || '—'
-  const docName = `Voucher: ${vchType} (${vchRef})`
-  
-  const logData = {
-    docName,
-    refNo: vchRef,
-    voucherDate: voucher?.date || '',
-    oldValue: oldValue ? formatCurrencyForLog(oldValue) : '—',
-    newValue: formatCurrencyForLog(voucher?.totalAmount || voucher?.amount || 0),
-    userEmail: userStr,       // Displayed in "Added/Edited By" column
-    userName: name,           // Clean name for ACCPRO parsing
-    source: 'QAPD',           // Explicit marker — ACCPRO uses this to show QAPD badge
-    sourceApp: 'QAPD',        // Same as source, for compatibility
-    status: action.toUpperCase(), // 'CREATED', 'EDITED', 'DELETED'
-    timestamp: Date.now(),
-    date: new Date().toISOString().split('T')[0],
-    userId: companyId         // ⬅️ CRITICAL: AccPro filters/queries logs locally by userId
-  }
-
-  // 1. Save log to local database (audit_logs collection)
-  const logId = uuidv4()
-  const colRef = collection(db, 'audit_logs')
-  await setDoc(doc(colRef, logId), logData)
-
-  // 2. Sync to cloud instantly — write log fields at TOP LEVEL so ACCPRO's
-  //    system log page can read them directly (not nested under a 'data' field)
-  try {
-    const { collection: c, doc: d, setDoc: s } = await import('@firebase/firestore');
-    const livePath = `companies_live/${companyId}/records`;
-    const now = Date.now();
-    const cloudDocRef = d(c(cloudDb, livePath), logId);
-    await s(cloudDocRef, {
-      ...logData,            // Fields at top level: docName, refNo, userEmail, status, etc.
-      id: logId,
-      collectionName: 'audit_logs',
-      data: logData,         // Nested data map for ACCPRO's standard liveSync puller
-      timestamp: now,
-      syncTimestamp: now
-    }, { merge: true });
-    console.log(`[QAPD] ✅ Log synced: ${logId}`);
-  } catch (e) {
-    console.warn('[QAPD] Log cloud sync error:', e.message);
-  }
-  markSelfSynced(companyId, logId)
-}
-
-function formatCurrencyForLog(val) {
-  const num = Number(val || 0)
-  return new Intl.NumberFormat('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(num)
-}
 
 export async function listLogs() {
   const companyId = getCurrentCompanyId()

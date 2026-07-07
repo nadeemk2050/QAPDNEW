@@ -89,8 +89,6 @@ export async function startCloudSync(companyId) {
   currentCompanyId = companyId;
   const livePath = `companies_live/${companyId}/records`;
 
-  console.log(`[CloudSync] Listening on ${livePath}`);
-
   try {
     const recordsRef = collection(cloudDb, livePath);
     const recordsQuery = query(recordsRef);
@@ -133,12 +131,10 @@ export async function startCloudSync(companyId) {
 
           if (operation === 'removed') {
             await removeLocalRecord(companyDB, docId, colName);
-            console.log(`[CloudSync] Removed locally: ${colName}/${docId}`);
           } else {
             // added or modified — upsert into local RxDB (same pattern as login download)
             const syncTs = data.syncTimestamp || data.timestamp || Date.now();
             await upsertLocalRecord(companyDB, docId, colName, docData, syncTs, data.timestamp);
-            console.log(`[CloudSync] Synced to local: ${colName}/${docId} (${operation})`);
           }
         } catch (err) {
           console.warn(`[CloudSync] Error processing ${docId}:`, err.message);
@@ -166,7 +162,6 @@ export async function startCloudSync(companyId) {
       }, 5000);
     });
 
-    console.log(`[CloudSync] ✅ Active`);
   } catch (err) {
     console.error('[CloudSync] Failed to start:', err.message);
   }
@@ -176,7 +171,6 @@ export function stopCloudSync() {
   if (unsubscribe) {
     unsubscribe();
     unsubscribe = null;
-    console.log(`[CloudSync] Stopped listener for ${currentCompanyId || 'unknown'}`);
   }
   if (debounceTimer) {
     clearTimeout(debounceTimer);

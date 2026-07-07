@@ -56,7 +56,6 @@ export default function CompanySelect({ user, onSelectCompany, onLogout }) {
           };
         });
         setCloudCompanies(companies);
-        console.log(`[QAPD] Live registry: ${companies.length} companies for ${user?.email}`);
       }, (err) => {
         console.warn('[QAPD] Registry onSnapshot error:', err.message);
         // Fallback: try fetching without filter
