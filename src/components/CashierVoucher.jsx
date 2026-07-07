@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { listAccounts, listLedgers, addPayment, addContra, checkRefNo, getVoucher, updateVoucher } from '../api'
 import SearchableSelect from './SearchableSelect'
+import SmartDatePicker from './SmartDatePicker'
 
 const VOUCHER_TYPES = {
   payment: { label: 'Payment', icon: Send, color: 'text-red-600', bg: 'bg-red-100', border: 'border-red-200' },
@@ -549,11 +550,11 @@ export default function CashierVoucher({ subUser }) {
               <Calendar size={10} className="inline mr-0.5" />
               DATE
             </label>
-            <input
-              type="date"
+            <SmartDatePicker
               value={date}
-              onChange={e => setDate(e.target.value)}
-              className="input-field text-xs"
+              onChange={setDate}
+              mode="date"
+              className="w-full"
             />
           </div>
         </div>

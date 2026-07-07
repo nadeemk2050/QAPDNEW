@@ -5,6 +5,7 @@ import {
   ChevronRight, Building2, Send, Receipt, ArrowUpDown, Download, RefreshCw,
   Search, ChevronLeft, FileText
 } from 'lucide-react'
+import SmartDatePicker from './SmartDatePicker'
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
@@ -577,17 +578,11 @@ export default function Layout({ company, subUser, onLogout, children }) {
                       <ChevronLeft size={13} />
                     </button>
 
-                    <div className="relative flex items-center justify-center bg-slate-50 border border-slate-200 rounded px-2 py-0.5 hover:border-indigo-400 transition-colors text-center shrink-0">
-                      <input
-                        type="date"
-                        value={registerData.filterDate}
-                        onChange={(e) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'filterDate', value: e.target.value } }))}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                      <span className="text-[10px] font-extrabold text-indigo-600">
-                        {formatDate(registerData.filterDate)}
-                      </span>
-                    </div>
+                    <SmartDatePicker
+                      value={registerData.filterDate}
+                      onChange={(val) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'filterDate', value: val } }))}
+                      mode="date"
+                    />
 
                     <button
                       onClick={() => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-step', { detail: 'next' }))}
@@ -600,31 +595,19 @@ export default function Layout({ company, subUser, onLogout, children }) {
 
                 {registerData.dateMode === 'custom' && (
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <div className="relative flex items-center justify-center bg-slate-50 border border-slate-200 rounded px-2 py-0.5 hover:border-indigo-400 transition-colors text-center shrink-0">
-                      <input
-                        type="date"
-                        value={registerData.startDate}
-                        onChange={(e) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'startDate', value: e.target.value } }))}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                      <span className="text-[10px] font-extrabold text-indigo-600">
-                        From: {formatDate(registerData.startDate)}
-                      </span>
-                    </div>
+                    <SmartDatePicker
+                      value={registerData.startDate}
+                      onChange={(val) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'startDate', value: val } }))}
+                      mode="date"
+                    />
 
-                    <span className="text-slate-400 text-[9px] font-bold font-mono">to</span>
+                    <span className="text-slate-400 text-[9px] font-bold font-mono shrink-0">to</span>
 
-                    <div className="relative flex items-center justify-center bg-slate-50 border border-slate-200 rounded px-2 py-0.5 hover:border-indigo-400 transition-colors text-center shrink-0">
-                      <input
-                        type="date"
-                        value={registerData.endDate}
-                        onChange={(e) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'endDate', value: e.target.value } }))}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                      <span className="text-[10px] font-extrabold text-indigo-600">
-                        To: {formatDate(registerData.endDate)}
-                      </span>
-                    </div>
+                    <SmartDatePicker
+                      value={registerData.endDate}
+                      onChange={(val) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'endDate', value: val } }))}
+                      mode="date"
+                    />
                   </div>
                 )}
 
@@ -637,22 +620,11 @@ export default function Layout({ company, subUser, onLogout, children }) {
                       <ChevronLeft size={13} />
                     </button>
 
-                    <div className="relative flex items-center justify-center bg-slate-50 border border-slate-200 rounded px-2 py-0.5 hover:border-indigo-400 transition-colors text-center shrink-0">
-                      <input
-                        type="month"
-                        value={registerData.filterMonth || new Date().toISOString().substring(0, 7)}
-                        onChange={(e) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'filterMonth', value: e.target.value } }))}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                      <span className="text-[10px] font-extrabold text-indigo-600">
-                        {(() => {
-                          const fm = registerData.filterMonth;
-                          if (!fm) return '—';
-                          const [y, m] = fm.split('-').map(Number);
-                          return new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
-                        })()}
-                      </span>
-                    </div>
+                    <SmartDatePicker
+                      value={registerData.filterMonth || new Date().toISOString().substring(0, 7)}
+                      onChange={(val) => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-date', { detail: { type: 'filterMonth', value: val } }))}
+                      mode="month"
+                    />
 
                     <button
                       onClick={() => window.dispatchEvent(new CustomEvent('quickaccpro-register-filter-month-step', { detail: 'next' }))}

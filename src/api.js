@@ -81,18 +81,24 @@ export async function listLedgers() {
 
 // Helper to resolve Contra names from account ID if missing in document fields
 function resolveContraNames(data, ledgerList) {
-  let drName = data.toAccountName || data.drName || data.payments?.[0]?.ledgerName || (data.splits && data.splits.length > 0 ? (data.splits[0].targetName || data.splits[0].name) : '') || ''
+  // Dr = TO/receiver, Cr = FROM/giver
+  // ACCPRO stores TO account in partyId/partyName, QAPD uses toAccountId/toAccountName
+  let drName = data.toAccountName || data.drName || data.payments?.[0]?.ledgerName || 
+    (data.splits && data.splits.length > 0 ? (data.splits[0].targetName || data.splits[0].name) : '') || 
+    data.partyName || ''  // ← fallback for ACCPRO-style data
   let crName = data.accountName || data.crName || data.fromAccountName || ''
-  
+
   if ((!drName || !crName) && ledgerList && ledgerList.length > 0) {
     const resolvedDrId = data.toAccountId || data.partyId || data.payments?.[0]?.ledgerId || data.splits?.[0]?.targetId || data.splits?.[0]?.id
     const resolvedCrId = data.fromAccountId || data.accountId
-    
+
     if (!drName && resolvedDrId) {
-      drName = ledgerList.find(a => a.id === resolvedDrId)?.name || ''
+      const found = ledgerList.find(a => a.id === resolvedDrId)
+      drName = found ? found.name : ''
     }
     if (!crName && resolvedCrId) {
-      crName = ledgerList.find(a => a.id === resolvedCrId)?.name || ''
+      const found = ledgerList.find(a => a.id === resolvedCrId)
+      crName = found ? found.name : ''
     }
   }
   return { drName, crName }
@@ -206,14 +212,13 @@ export async function listTransactions(params = {}) {
               crName = resolveLedgerName(firstPaymentId, ledgerList)
             }
           } else if (subType === 'contra') {
-            drName = data.drName || data.toAccountName || ''
-            crName = data.crName || data.accountName || data.fromAccountName || ''
+            drName = data.toAccountName || data.drName || data.partyName || ''
+            crName = data.accountName || data.crName || data.fromAccountName || ''
             if (!drName || !crName) {
               const resolved = resolveContraNames(data, ledgerList)
               drName = drName || resolved.drName
               crName = crName || resolved.crName
             }
-            console.log('[QAPD] listTransactions Contra resolved data:', { drName, crName, data })
           }
         } else if (col === 'journal_vouchers') {
           if (data.isMulti && data.rows && data.rows.length > 0) {
@@ -246,6 +251,12 @@ export async function listTransactions(params = {}) {
           amount: Number(data.totalAmount || data.amount || 0),
           narration: data.narration || data.description || '',
           accountName: data.accountName || '',
+          accountId: data.accountId || '',
+          partyId: data.partyId || '',
+          toAccountId: data.toAccountId || '',
+          fromAccountId: data.fromAccountId || '',
+          drId: data.drId || '',
+          crId: data.crId || '',
           partyName: col === 'journal_vouchers' ? `${drName || '—'} / ${crName || '—'}` : (subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || '')),
           drName,
           crName,
@@ -316,7 +327,9 @@ export async function addContra(data) {
     userId: companyId,
     createdAt: Date.now(),
     status: 'active',
-    partyName: data.partyName || `${data.accountName || ''} → ${data.toAccountName || ''}`,
+    // ACCPRO expects TO/receiver account in partyId/partyName
+    partyId: data.toAccountId || data.partyId || '',
+    partyName: data.toAccountName || data.partyName || '',
     drName: data.toAccountName || '',
     crName: data.accountName || ''
   }
@@ -582,14 +595,13 @@ export async function getAccountLedger(accountId, params = {}) {
                 crName = resolveLedgerName(firstPaymentId, ledgerList)
               }
             } else if (subType === 'contra') {
-              drName = data.drName || data.toAccountName || ''
-              crName = data.crName || data.accountName || data.fromAccountName || ''
+              drName = data.toAccountName || data.drName || data.partyName || ''
+              crName = data.accountName || data.crName || data.fromAccountName || ''
               if (!drName || !crName) {
                 const resolved = resolveContraNames(data, ledgerList)
                 drName = drName || resolved.drName
                 crName = crName || resolved.crName
               }
-              console.log('[QAPD] getAccountLedger Contra resolved data:', { drName, crName, data })
             }
           } else if (col === 'journal_vouchers') {
             if (data.isMulti && data.rows && data.rows.length > 0) {
@@ -620,6 +632,12 @@ export async function getAccountLedger(accountId, params = {}) {
             amount: Number(data.totalAmount || data.amount || 0),
             narration: data.narration || data.description || '',
             accountName: data.accountName || '',
+            accountId: data.accountId || '',
+            partyId: data.partyId || '',
+            toAccountId: data.toAccountId || '',
+            fromAccountId: data.fromAccountId || '',
+            drId: data.drId || '',
+            crId: data.crId || '',
             partyName: col === 'journal_vouchers' ? `${drName || '—'} / ${crName || '—'}` : (subType === 'contra' ? `${crName || '—'} → ${drName || '—'}` : (data.partyName || (data.payments?.[0]?.ledgerName) || '')),
             drName,
             crName,
@@ -635,6 +653,50 @@ export async function getAccountLedger(accountId, params = {}) {
   } catch (e) {
     return { transactions: [], total: 0 }
   }
+}
+
+/**
+ * Get net balance for an account — uses getAccountLedger under the hood
+ * so it always matches the detailed ledger view (like Excel cell reference).
+ * @param {string} accountId
+ * @param {string} accountName - used for contra Dr/Cr resolution
+ * @returns {Promise<number>} net balance (positive = Dr, negative = Cr)
+ */
+export async function getLedgerBalance(accountId, accountName) {
+  const data = await getAccountLedger(accountId)
+  const txns = data.transactions || []
+  let totalDr = 0
+  let totalCr = 0
+  const nameLower = (accountName || '').trim().toLowerCase()
+  for (const t of txns) {
+    const st = (t.subType || '').toLowerCase()
+    if (st === 'receipt' || st === 'in') {
+      totalDr += Number(t.amount || 0)
+    } else if (st === 'payment' || st === 'out') {
+      totalCr += Number(t.amount || 0)
+    } else if (st === 'contra') {
+      const isDr = (t.drName || '').trim().toLowerCase() === nameLower
+      if (isDr) totalDr += Number(t.amount || 0)
+      else totalCr += Number(t.amount || 0)
+    }
+  }
+  return totalDr - totalCr
+}
+
+/**
+ * Get balances for multiple accounts in one shot (batch).
+ * Calls getAccountLedger individually but all reads are local RxDB (fast).
+ * @param {Array} accounts - [{ id, name }]
+ * @returns {Promise<Object>} map of accountId → balance
+ */
+export async function getLedgerBalances(accounts) {
+  const results = {}
+  for (const acc of accounts) {
+    if (acc && acc.id) {
+      results[acc.id] = await getLedgerBalance(acc.id, acc.name)
+    }
+  }
+  return results
 }
 
 export async function listContra(params = {}) {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Building2, Search, ArrowLeft, ArrowRight, RefreshCw, Wallet2, Clock, ArrowUpDown } from 'lucide-react'
-import { listAccounts, getAccountLedger, getDaybookAll } from '../api'
+import { listAccounts, getAccountLedger, getLedgerBalances } from '../api'
 import { getCurrentCompanyId, getDB } from '../localDB'
 
 const getDaysAgoStr = (days) => {
@@ -43,76 +43,14 @@ export default function CashBankRegister() {
     try {
       const data = await listAccounts()
       const list = data.accounts || []
-      
-      const txnsData = await getDaybookAll().catch(() => ({ transactions: [] }))
-      const allTxns = txnsData.transactions || []
-      
-      const enrichedAccounts = list.map(acc => {
-        const nameLower = acc.name.trim().toLowerCase()
-        let balance = Number(acc.openingBalance || acc.balance || 0)
-        
-        const accTxns = allTxns.filter(t => {
-          return (t.accountName || '').trim().toLowerCase() === nameLower ||
-                 (t.drName || '').trim().toLowerCase() === nameLower ||
-                 (t.crName || '').trim().toLowerCase() === nameLower ||
-                 (t.partyName || '').trim().toLowerCase() === nameLower ||
-                 (t.drName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower) ||
-                 (t.crName || '').toLowerCase().split(', ').map(n => n.trim().toLowerCase()).includes(nameLower)
-        })
-        accTxns.sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-        
-        for (const t of accTxns) {
-          let isDr = false
-          let isCr = false
-          let amt = Number(t.amount || 0)
-          
-          const isAccountNameMatch = (t.accountName || '').toLowerCase() === nameLower
-          const isDrMatch = (t.drName || '').toLowerCase() === nameLower || 
-                            (t.drName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
-          const isCrMatch = (t.crName || '').toLowerCase() === nameLower || 
-                            (t.crName || '').toLowerCase().split(', ').map(n => n.trim()).includes(nameLower)
-          
-          if (t.type === 'payments' && isAccountNameMatch) {
-            if (t.subType === 'in' || t.subType === 'receipt') {
-              isDr = true
-            } else if (t.subType === 'out' || t.subType === 'payment') {
-              isCr = true
-            } else if (t.subType?.toLowerCase() === 'contra') {
-              if (isDrMatch && !isCrMatch) {
-                isDr = true
-              } else {
-                isCr = true
-              }
-            }
-          } else if (isDrMatch) {
-            isDr = true
-            if (t.isMulti && t.splits) {
-              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower)
-              if (matchedSplit) {
-                amt = Number(matchedSplit.amount || 0)
-              }
-            }
-          } else if (isCrMatch) {
-            isCr = true
-            if (t.isMulti && t.splits) {
-              const matchedSplit = t.splits.find(s => (s.targetName || '').toLowerCase() === nameLower)
-              if (matchedSplit) {
-                amt = Number(matchedSplit.amount || 0)
-              }
-            }
-          } else if (isAccountNameMatch) {
-            isDr = true
-          }
-          
-          if (isDr) balance += amt
-          if (isCr) balance -= amt
-        }
-        
-        return {
-          ...acc,
-          balance
-        }
-      })
+
+      // Get balances directly from the ledger API — same source as the detailed view
+      const balanceMap = await getLedgerBalances(list)
+
+      const enrichedAccounts = list.map(acc => ({
+        ...acc,
+        balance: balanceMap[acc.id] ?? Number(acc.openingBalance || acc.balance || 0)
+      }))
 
       setAccounts(enrichedAccounts)
       localStorage.setItem(cacheKey, JSON.stringify(enrichedAccounts))
