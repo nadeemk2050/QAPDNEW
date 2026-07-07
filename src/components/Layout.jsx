@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { 
   LayoutDashboard, BookOpen, UserCircle, LogOut, Menu, X, 
   ChevronRight, Building2, Send, Receipt, ArrowUpDown, Download, RefreshCw,
@@ -29,6 +29,7 @@ const getPageTitle = (pathname) => {
 }
 
 export default function Layout({ company, subUser, onLogout, children }) {
+  const navigate = useNavigate()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
@@ -437,7 +438,7 @@ export default function Layout({ company, subUser, onLogout, children }) {
                     </span>
                     {registerData.currentBalance !== undefined && registerData.currentBalance !== null && (
                       <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${registerData.currentBalance >= 0 ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
-                        BAL: {new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(registerData.currentBalance || 0))} {registerData.currentBalance >= 0 ? 'Dr' : 'Cr'}
+                        <span className="text-indigo-700">Balance</span>: {new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Math.abs(registerData.currentBalance || 0))} {registerData.currentBalance >= 0 ? 'Dr' : 'Cr'}
                       </span>
                     )}
                   </div>
@@ -462,6 +463,34 @@ export default function Layout({ company, subUser, onLogout, children }) {
               <div className="flex items-center gap-1.5 shrink-0">
                 {registerData && (
                   <>
+                    {/* Quick Voucher Buttons */}
+                    <div className="flex items-center gap-0.5 mr-1 pr-1.5 border-r border-slate-200">
+                      <button
+                        onClick={() => navigate('/voucher/payment')}
+                        className="px-1.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 text-[9px] font-extrabold uppercase transition-all flex items-center gap-0.5"
+                        title="New Payment"
+                      >
+                        <Send size={10} />
+                        <span className="hidden sm:inline">PMT</span>
+                      </button>
+                      <button
+                        onClick={() => navigate('/voucher/receipt')}
+                        className="px-1.5 py-1 rounded-md bg-green-50 text-green-600 hover:bg-green-100 text-[9px] font-extrabold uppercase transition-all flex items-center gap-0.5"
+                        title="New Receipt"
+                      >
+                        <Receipt size={10} />
+                        <span className="hidden sm:inline">RCT</span>
+                      </button>
+                      <button
+                        onClick={() => navigate('/voucher/contra')}
+                        className="px-1.5 py-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 text-[9px] font-extrabold uppercase transition-all flex items-center gap-0.5"
+                        title="New Contra"
+                      >
+                        <ArrowUpDown size={10} />
+                        <span className="hidden sm:inline">CTR</span>
+                      </button>
+                    </div>
+
                     {/* Search Toggle Icon & Input */}
                     <div className="flex items-center gap-1">
                       {searchVisible && (

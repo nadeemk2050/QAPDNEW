@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Building2, Search, ArrowLeft, ArrowRight, RefreshCw, Wallet2, Clock, ArrowUpDown } from 'lucide-react'
-import { listAccounts, getAccountLedger, getLedgerBalances } from '../api'
+import { listAccounts, getAccountLedger } from '../api'
 import { getCurrentCompanyId, getDB } from '../localDB'
+import { refreshAllBalances, getBalance, onBalancesChange } from '../store/accountBalances'
 
 const getDaysAgoStr = (days) => {
   const d = new Date()
@@ -44,12 +45,12 @@ export default function CashBankRegister() {
       const data = await listAccounts()
       const list = data.accounts || []
 
-      // Get balances directly from the ledger API — same source as the detailed view
-      const balanceMap = await getLedgerBalances(list)
+      // Refresh all balances from the ledger API (authoritative source)
+      const balanceMap = await refreshAllBalances()
 
       const enrichedAccounts = list.map(acc => ({
         ...acc,
-        balance: balanceMap[acc.id] ?? Number(acc.openingBalance || acc.balance || 0)
+        balance: balanceMap[acc.id] ?? getBalance(acc.id) ?? Number(acc.openingBalance || acc.balance || 0)
       }))
 
       setAccounts(enrichedAccounts)
@@ -61,6 +62,17 @@ export default function CashBankRegister() {
       setRefreshing(false)
     }
   }
+
+  // Listen for balance changes from other components
+  useEffect(() => {
+    const unsub = onBalancesChange(({ balances }) => {
+      setAccounts(prev => prev.map(acc => ({
+        ...acc,
+        balance: balances[acc.id] ?? acc.balance
+      })))
+    })
+    return unsub
+  }, [])
 
   const openAccountLedger = async (acc) => {
     setSelectedAccount(acc)
@@ -273,7 +285,7 @@ export default function CashBankRegister() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-800">Cash / Bank Ledgers</h1>
-          <p className="text-sm text-slate-500 mt-1">Real-time balances of all cash & bank accounts</p>
+          <p className="text-sm text-slate-500 mt-1">Click an account to view detailed ledger</p>
         </div>
         <button
           onClick={() => loadAccounts(true)}
@@ -310,43 +322,28 @@ export default function CashBankRegister() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filtered.map(acc => {
-            const bal = Number(acc.balance || 0)
-            const isNegative = bal < 0
-            return (
-              <div
-                key={acc.id}
-                onClick={() => navigate(`/daybook?accountName=${encodeURIComponent(acc.name)}`)}
-                className="card p-4 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer flex items-center justify-between group"
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isNegative ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                    <Building2 size={20} />
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide truncate max-w-[180px] sm:max-w-xs">
-                      {acc.name}
-                    </h3>
-                    <p className="text-[10px] text-slate-400 uppercase font-semibold">
-                      Account ID: {acc.id}
-                    </p>
-                  </div>
+          {filtered.map(acc => (
+            <div
+              key={acc.id}
+              onClick={() => navigate(`/daybook?accountName=${encodeURIComponent(acc.name)}`)}
+              className="card p-4 hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer flex items-center justify-between group"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  <Building2 size={20} />
                 </div>
-
-                <div className="text-right flex items-center gap-3">
-                  <div>
-                    <p className={`text-base font-bold font-mono ${isNegative ? 'text-red-600' : 'text-slate-800'}`}>
-                      {formatCurrency(bal)}
-                    </p>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase">
-                      Net Balance
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all" />
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide truncate max-w-[220px] sm:max-w-xs">
+                    {acc.name}
+                  </h3>
+                  <p className="text-[10px] text-slate-400 uppercase font-semibold truncate">
+                    {acc.id}
+                  </p>
                 </div>
               </div>
-            )
-          })}
+              <ArrowRight size={16} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all shrink-0" />
+            </div>
+          ))}
         </div>
       )}
     </div>

@@ -320,6 +320,7 @@ export async function addContra(data) {
   const totalAmount = parseFloat(data.amount || 0)
 
   const docData = {
+    // Spread incoming data (has fromAccountId, toAccountId, accountName, toAccountName, ...)
     ...data,
     totalAmount,
     amount: totalAmount,
@@ -327,11 +328,28 @@ export async function addContra(data) {
     userId: companyId,
     createdAt: Date.now(),
     status: 'active',
+    // ── FROM account (payer/giver) ──
+    accountId: data.fromAccountId || data.accountId || '',
+    fromAccountId: data.fromAccountId || data.accountId || '',
+    accountName: data.accountName || data.fromAccountName || '',
+    crName: data.accountName || data.fromAccountName || '',
+    // ── TO account (receiver) ──
+    toAccountId: data.toAccountId || '',
+    toAccountName: data.toAccountName || '',
+    drName: data.toAccountName || '',
     // ACCPRO expects TO/receiver account in partyId/partyName
     partyId: data.toAccountId || data.partyId || '',
     partyName: data.toAccountName || data.partyName || '',
-    drName: data.toAccountName || '',
-    crName: data.accountName || ''
+    // ACCPRO also reads the payments array to identify transaction parties
+    payments: [
+      {
+        ledgerId: data.toAccountId || '',
+        ledgerName: data.toAccountName || '',
+        amount: totalAmount,
+        type: 'dr',
+        narration: data.narration || ''
+      }
+    ]
   }
 
   // 1. Save to local RxDB

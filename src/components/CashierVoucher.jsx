@@ -464,7 +464,7 @@ export default function CashierVoucher({ subUser }) {
     <div className="max-w-lg mx-auto space-y-4 pb-20">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/dashboard')} className="p-2 -ml-2 rounded-xl hover:bg-slate-100 transition-colors">
+        <button onClick={() => navigate(-1)} className="p-2 -ml-2 rounded-xl hover:bg-slate-100 transition-colors">
           <ArrowLeft size={20} className="text-slate-600" />
         </button>
         <div className={`w-10 h-10 rounded-xl ${cfg.bg} flex items-center justify-center`}>
