@@ -108,6 +108,9 @@ export async function startCloudSync(companyId) {
         const colName = data.collectionName || 'unknown';
         const operation = change.type;
 
+        // Skip system/audit logs — QAPD doesn't use them, they just burn Firebase reads
+        if (colName === 'system_logs' || colName === 'audit_logs') continue;
+
         // Handle TWO data formats:
         // 1) data.data exists → fields nested under 'data' (vouchers, accounts, QAPD-style)
         // 2) data.data missing → fields at top level (audit logs from ACCPRO)

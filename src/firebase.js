@@ -2,9 +2,6 @@
 import { initializeApp } from "firebase/app";
 import { initializeFirestore, memoryLocalCache, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getFunctions } from "firebase/functions";
-import { getDatabase } from "firebase/database";
-import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDaKgWXJiz_NTYo4NBCXhVZ7qIo9SwkooY",
@@ -25,11 +22,8 @@ const db = initializeFirestore(app, {
     : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
 const auth = getAuth(app);
-const functions = getFunctions(app);
-const rtdb = getDatabase(app);
-const storage = getStorage(app);
 
 // Real Firebase refs for operations that need to bypass the local shim
-import { app as realApp, db as cloudDb, auth as cloudAuth, functions as cloudFunctions, rtdb as cloudRtdb } from './realFirebase.js';
+import { app as realApp, db as cloudDb, auth as cloudAuth } from './realFirebase.js';
 
-export { app, db, auth, functions, rtdb, storage, cloudDb, cloudAuth, cloudFunctions, cloudRtdb };
+export { app, db, auth, cloudDb, cloudAuth };

@@ -3,8 +3,6 @@
 import { getApp, initializeApp } from "firebase/app";
 import { initializeFirestore, getFirestore, memoryLocalCache } from "@firebase/firestore";
 import { getAuth } from "firebase/auth";
-import { getFunctions } from "@firebase/functions";
-import { getDatabase } from "@firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDaKgWXJiz_NTYo4NBCXhVZ7qIo9SwkooY",
@@ -32,7 +30,5 @@ try {
 }
 
 const auth = getAuth(app);
-const functions = getFunctions(app);
-const rtdb = getDatabase(app);
 
-export { app, db, auth, functions, rtdb };
+export { app, db, auth };
