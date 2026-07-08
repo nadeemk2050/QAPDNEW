@@ -89,15 +89,27 @@ export async function startCloudSync(companyId) {
   currentCompanyId = companyId;
   const livePath = `companies_live/${companyId}/records`;
 
+  // ⬇️ Track last pull timestamp so initial snapshot only captures FUTURE changes
+  const lastPullKey = `qapd_last_pull_${companyId}`;
+  let lastPullTs = Number(localStorage.getItem(lastPullKey) || 0);
+  if (lastPullTs === 0) {
+    // First sync or reset — only capture changes FROM NOW onward
+    lastPullTs = Date.now();
+    localStorage.setItem(lastPullKey, String(lastPullTs));
+  }
+  let maxSeenSyncTs = lastPullTs;
+
   try {
     const recordsRef = collection(cloudDb, livePath);
-    // ⬇️ Only watch collections QAPD actually uses — excludes system_logs & audit_logs (biggest read cost)
+    // ⬇️ Only watch collections QAPD uses + only changes since last pull
+    const WATCHED_COLLECTIONS = [
+      'payments', 'invoices', 'journal_vouchers', 'stock_journals',
+      'parties', 'accounts', 'ledgers', 'expenses',
+      'income_accounts', 'capital_accounts'
+    ];
     const recordsQuery = query(recordsRef,
-      where('collectionName', 'in', [
-        'payments', 'invoices', 'journal_vouchers', 'stock_journals',
-        'parties', 'accounts', 'ledgers', 'expenses',
-        'income_accounts', 'capital_accounts'
-      ])
+      where('collectionName', 'in', WATCHED_COLLECTIONS),
+      where('syncTimestamp', '>', lastPullTs)
     );
     let processing = false;
 
@@ -114,6 +126,8 @@ export async function startCloudSync(companyId) {
         const docId = data.id || docSnap.id;
         const colName = data.collectionName || 'unknown';
         const operation = change.type;
+        const remoteTs = data.syncTimestamp || 0;
+        if (remoteTs > maxSeenSyncTs) maxSeenSyncTs = remoteTs;
 
         // Skip system/audit logs — QAPD doesn't use them, they just burn Firebase reads
         if (colName === 'system_logs' || colName === 'audit_logs') continue;
@@ -153,6 +167,11 @@ export async function startCloudSync(companyId) {
 
       if (hasExternalChange) {
         triggerRefresh();
+      }
+
+      // Persist the latest sync timestamp so next session starts from here
+      if (maxSeenSyncTs > lastPullTs) {
+        localStorage.setItem(lastPullKey, String(maxSeenSyncTs));
       }
 
       processing = false;
