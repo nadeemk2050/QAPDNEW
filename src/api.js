@@ -520,6 +520,13 @@ export async function updateVoucher(voucherId, data) {
     totalAmount = data.payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   }
 
+  // If payments were updated, also sync partyId/partyName from first payment
+  if (data.payments && Array.isArray(data.payments) && data.payments.length > 0) {
+    data.partyId = data.payments[0].ledgerId || data.partyId || ''
+    data.partyName = data.payments[0].ledgerName || data.partyName || ''
+    data.drName = data.payments[0].ledgerName || data.drName || ''
+  }
+
   const docRef = doc(db, colName, voucherId)
   const updatedData = { 
     ...data, 
