@@ -685,13 +685,6 @@ export default function CashierVoucher({ subUser }) {
                       </div>
                     </div>
                   </div>
-                  <input
-                    type="text"
-                    value={row.narration}
-                    onChange={e => updateRow(idx, 'narration', e.target.value)}
-                    className="input-field text-xs"
-                    placeholder="Particulars (optional)"
-                  />
                 </div>
               ))}
             </div>

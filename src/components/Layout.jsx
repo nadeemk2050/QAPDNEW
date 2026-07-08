@@ -36,14 +36,7 @@ export default function Layout({ company, subUser, onLogout, children }) {
   const [registerData, setRegisterData] = useState(null)
   const [showInstructionModal, setShowInstructionModal] = useState(false)
   const [searchVisible, setSearchVisible] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
   const location = useLocation()
-
-  const handleManualSync = async () => {
-    // QAPD uses local-first data — no manual sync needed
-    alert("QAPD uses automatic local database. Data is synced automatically.")
-    setSidebarOpen(false)
-  }
 
   useEffect(() => {
     const handleRegisterActive = (e) => {
@@ -393,15 +386,6 @@ export default function Layout({ company, subUser, onLogout, children }) {
                 <span>Install Application</span>
               </button>
             )}
-            <button
-              onClick={handleManualSync}
-              disabled={isSyncing}
-              className="flex items-center gap-3 w-full px-4 py-2.5 rounded-xl text-sm font-medium 
-                         text-indigo-200 hover:text-white hover:bg-indigo-800/50 transition-all text-left"
-            >
-              <RefreshCw size={18} className={isSyncing ? 'animate-spin' : ''} />
-              <span>{isSyncing ? 'Syncing...' : 'Database Sync'}</span>
-            </button>
             <button
               onClick={onLogout}
               className="flex items-center gap-3 w-full px-4 py-2.5 rounded-xl text-sm font-medium 
