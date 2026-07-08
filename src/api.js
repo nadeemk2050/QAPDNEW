@@ -113,15 +113,13 @@ function resolveSplits(data, colName, ledgerList) {
   const typeLower = (data.type || '').toLowerCase()
   const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
 
-  if (colName === 'journal_vouchers') {
-    if (data.rows && Array.isArray(data.rows)) {
-      return data.rows.map(r => ({
-        targetId: r.id,
-        targetName: resolveLedgerName(r.id, ledgerList),
-        amount: Number(r.amount || 0),
-        type: r.type
-      }))
-    }
+  if (data.rows && Array.isArray(data.rows)) {
+    return data.rows.map(r => ({
+      targetId: r.id,
+      targetName: resolveLedgerName(r.id, ledgerList),
+      amount: Number(r.amount || 0),
+      type: r.type
+    }))
   }
 
   if (data.splits && Array.isArray(data.splits)) {
@@ -182,7 +180,7 @@ export async function listTransactions(params = {}) {
       const snap = await getDocs(q)
       snap.docs.forEach(d => {
         const data = d.data()
-        if (data.deleted || data.status === 'deleted' || data.isDeleted) return
+        if (data.deleted || data.status === 'deleted' || data.isDeleted || data.isSplit) return
         const typeMap = { out: 'Payment', in: 'Receipt', contra: 'Contra', purchase: 'Purchase', sales: 'Sales', journal: 'Journal', manufacturing: 'Manufacturing', stock_journal: 'Stock Journal' }
         const typeLower = (data.type || '').toLowerCase()
         const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
@@ -190,25 +188,38 @@ export async function listTransactions(params = {}) {
         let drName = data.drName || ''
         let crName = data.crName || ''
         if (col === 'payments') {
+          const paymentsMulti = (data.payments && data.payments.length > 1) || (data.rows && data.rows.length > 2)
           if (subType === 'payment') {
-            drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
-            if (!drName) {
-              const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
-              drName = resolveLedgerName(firstPaymentId, ledgerList)
-            }
-            crName = data.crName || data.accountName || ''
-            if (!crName) {
-              crName = resolveLedgerName(data.accountId, ledgerList)
+            if (paymentsMulti && data.rows) {
+              const drRows = data.rows.filter(r => r.type === 'dr')
+              drName = drRows.length > 1 ? 'Multiple' : (resolveLedgerName(drRows[0]?.id, ledgerList) || data.partyName || 'Multiple')
+              crName = data.crName || data.accountName || resolveLedgerName(data.accountId, ledgerList) || ''
+            } else {
+              drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+              if (!drName) {
+                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                drName = resolveLedgerName(firstPaymentId, ledgerList)
+              }
+              crName = data.crName || data.accountName || ''
+              if (!crName) {
+                crName = resolveLedgerName(data.accountId, ledgerList)
+              }
             }
           } else if (subType === 'receipt') {
-            drName = data.drName || data.accountName || ''
-            if (!drName) {
-              drName = resolveLedgerName(data.accountId, ledgerList)
-            }
-            crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
-            if (!crName) {
-              const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
-              crName = resolveLedgerName(firstPaymentId, ledgerList)
+            if (paymentsMulti && data.rows) {
+              const crRows = data.rows.filter(r => r.type === 'cr')
+              crName = crRows.length > 1 ? 'Multiple' : (resolveLedgerName(crRows[0]?.id, ledgerList) || data.partyName || 'Multiple')
+              drName = data.drName || data.accountName || resolveLedgerName(data.accountId, ledgerList) || ''
+            } else {
+              drName = data.drName || data.accountName || ''
+              if (!drName) {
+                drName = resolveLedgerName(data.accountId, ledgerList)
+              }
+              crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+              if (!crName) {
+                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                crName = resolveLedgerName(firstPaymentId, ledgerList)
+              }
             }
           } else if (subType === 'contra') {
             drName = data.toAccountName || data.drName || data.partyName || ''
@@ -239,6 +250,8 @@ export async function listTransactions(params = {}) {
           }
         }
 
+        const isMultiPayment = data.isMulti || (data.rows && data.rows.length > 2) || (data.payments && data.payments.length > 1)
+
         allTxns.push({
           id: d.id,
           refNo: data.refNo || '',
@@ -260,7 +273,7 @@ export async function listTransactions(params = {}) {
           drName,
           crName,
           splits: resolveSplits(data, col, ledgerList),
-          isMulti: data.isMulti || false,
+          isMulti: isMultiPayment,
           syncTimestamp: data.lastModifiedAt?.seconds ? data.lastModifiedAt.seconds * 1000 : Date.now(),
           status: data.status || 'active'
         })
@@ -284,10 +297,31 @@ export async function addPayment(data) {
   // Calculate totalAmount from payments array
   const totalAmount = (data.payments || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
 
+  const payments = data.payments || []
+  const isMulti = payments.length > 1
+
+  // Build rows array for ACCPRO compatibility (like journal rows)
+  let rows = null
+  if (isMulti && payments.length > 0) {
+    rows = payments.map(p => ({
+      id: p.ledgerId || p.id,
+      amount: parseFloat(p.amount) || 0,
+      type: 'dr'
+    }));
+    // Add cash/bank as cr row
+    rows.push({
+      id: data.accountId || '',
+      amount: totalAmount,
+      type: 'cr'
+    });
+  }
+
   const docData = {
     ...data,
     totalAmount,
     amount: totalAmount,
+    rows,
+    isMulti,
     userId: companyId,
     createdAt: Date.now(),
     status: 'active',
@@ -307,6 +341,49 @@ export async function addPayment(data) {
   // 2. Push to cloud (real Firestore) for cross-device sync
   await syncToCloud(companyId, 'payments', voucherId, docData)
   markSelfSynced(companyId, voucherId)
+
+  // 3. For multi-receiver payments, sync INDIVIDUAL split docs per receiver
+  //    so ACCPRO's liveSync can post each receiver's amount to their account
+  if (isMulti && payments.length > 0) {
+    const baseData = { ...docData }
+
+    for (let i = 0; i < payments.length; i++) {
+      const p = payments[i]
+      // Use a clean UUID as split doc ID so ACCPRO treats it as a normal document
+      const splitId = crypto.randomUUID ? crypto.randomUUID() : `${voucherId}_s${i}`
+      const splitAmount = parseFloat(p.amount) || 0
+      const splitData = {
+        ...baseData,
+        // Include single-receiver payments array so ACCPRO can find party info
+        payments: [{
+          ledgerId: p.ledgerId || '',
+          ledgerName: p.ledgerName || '',
+          amount: splitAmount,
+          type: 'dr'
+        }],
+        rows: [{
+          id: p.ledgerId || '',
+          amount: splitAmount,
+          type: 'dr'
+        }, {
+          id: data.accountId || '',
+          amount: totalAmount,
+          type: 'cr'
+        }],
+        id: splitId,
+        parentVoucherId: voucherId,
+        partyId: p.ledgerId || '',
+        partyName: p.ledgerName || '',
+        amount: splitAmount,
+        totalAmount: splitAmount,
+        isSplit: true,
+        collectionName: 'payments'
+      }
+      await syncToCloud(companyId, 'payments', splitId, splitData)
+      markSelfSynced(companyId, splitId)
+    }
+  }
+
   return { success: true, id: voucherId }
 }
 
@@ -551,7 +628,7 @@ export async function getAccountLedger(accountId, params = {}) {
       const snap = await getDocs(q)
       snap.docs.forEach(d => {
         const data = d.data()
-        if (data.deleted || data.status === 'deleted' || data.isDeleted) return
+        if (data.deleted || data.status === 'deleted' || data.isDeleted || data.isSplit) return
         
         const accLower = (accountId || '').trim().toLowerCase()
         const unifiedSplits = resolveSplits(data, col, ledgerList)
@@ -598,25 +675,40 @@ export async function getAccountLedger(accountId, params = {}) {
           let drName = data.drName || ''
           let crName = data.crName || ''
           if (col === 'payments') {
+            // Check if this is a multi-receiver payment (either by flag or by rows/payments length)
+            const isMultiPayment = data.isMulti || (data.rows && data.rows.length > 2) || (data.payments && data.payments.length > 1)
+            
             if (subType === 'payment') {
-              drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
-              if (!drName) {
-                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
-                drName = resolveLedgerName(firstPaymentId, ledgerList)
-              }
-              crName = data.crName || data.accountName || ''
-              if (!crName) {
-                crName = resolveLedgerName(data.accountId, ledgerList)
+              if (isMultiPayment && data.rows) {
+                const drRows = data.rows.filter(r => r.type === 'dr')
+                drName = drRows.length > 1 ? 'Multiple' : (resolveLedgerName(drRows[0]?.id, ledgerList) || data.partyName || 'Multiple')
+                crName = data.crName || data.accountName || resolveLedgerName(data.accountId, ledgerList) || ''
+              } else {
+                drName = data.drName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+                if (!drName) {
+                  const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                  drName = resolveLedgerName(firstPaymentId, ledgerList)
+                }
+                crName = data.crName || data.accountName || ''
+                if (!crName) {
+                  crName = resolveLedgerName(data.accountId, ledgerList)
+                }
               }
             } else if (subType === 'receipt') {
-              drName = data.drName || data.accountName || ''
-              if (!drName) {
-                drName = resolveLedgerName(data.accountId, ledgerList)
-              }
-              crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
-              if (!crName) {
-                const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
-                crName = resolveLedgerName(firstPaymentId, ledgerList)
+              if (isMultiPayment && data.rows) {
+                const crRows = data.rows.filter(r => r.type === 'cr')
+                crName = crRows.length > 1 ? 'Multiple' : (resolveLedgerName(crRows[0]?.id, ledgerList) || data.partyName || 'Multiple')
+                drName = data.drName || data.accountName || resolveLedgerName(data.accountId, ledgerList) || ''
+              } else {
+                drName = data.drName || data.accountName || ''
+                if (!drName) {
+                  drName = resolveLedgerName(data.accountId, ledgerList)
+                }
+                crName = data.crName || data.partyName || (data.payments?.[0]?.ledgerName) || ''
+                if (!crName) {
+                  const firstPaymentId = data.payments?.[0]?.ledgerId || data.partyId || data.expenseId || data.incomeAccountId
+                  crName = resolveLedgerName(firstPaymentId, ledgerList)
+                }
               }
             } else if (subType === 'contra') {
               drName = data.toAccountName || data.drName || data.partyName || ''

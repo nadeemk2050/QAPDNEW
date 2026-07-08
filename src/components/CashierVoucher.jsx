@@ -158,25 +158,77 @@ export default function CashierVoucher({ subUser }) {
         const res = await getVoucher(voucherId)
         if (res.success && res.voucher) {
           const v = res.voucher
-          const resolvedType = v.type === 'in' ? 'receipt' : v.type === 'out' ? 'payment' : v.type
+          // ACCPRO may nest data under a 'data' field (double nesting)
+          const src = (v.data && (v.data.rows || v.data.payments || v.data.splits)) ? v.data : v
+          if (src !== v) {
+            // Copy missing top-level fields from v to src for compatibility
+            src.refNo = src.refNo || v.refNo
+            src.date = src.date || v.date
+            src.accountId = src.accountId || v.accountId
+            src.narration = src.narration || v.narration
+            src.type = src.type || v.type
+            src.amount = src.amount || v.amount
+            src.totalAmount = src.totalAmount || v.totalAmount
+            src.partyId = src.partyId || v.partyId
+            src.partyName = src.partyName || v.partyName
+            src.accountName = src.accountName || v.accountName
+            src.toAccountId = src.toAccountId || v.toAccountId
+            src.toAccountName = src.toAccountName || v.toAccountName
+          }
+          console.log('[QAPD] Edit voucher data:', { id: voucherId, src, v })
+          const resolvedType = src.type === 'in' ? 'receipt' : src.type === 'out' ? 'payment' : src.type
           setType(resolvedType)
-          setDate(v.date)
-          setRefNo(v.refNo)
-          originalRefNo.current = v.refNo
-          setAccountId(v.accountId)
-          setNarration(v.narration || '')
+          setDate(src.date)
+          setRefNo(src.refNo)
+          originalRefNo.current = src.refNo
+          setAccountId(src.accountId)
+          setNarration(src.narration || '')
 
           if (resolvedType === 'contra') {
-            setToAccountId(v.toAccountId || v.splits?.[0]?.targetId || v.splits?.[0]?.id || v.payments?.[0]?.ledgerId || '')
-            const targetAmt = v.totalAmount || v.amount || v.splits?.[0]?.amount || v.payments?.[0]?.amount || 0
+            setToAccountId(src.toAccountId || src.splits?.[0]?.targetId || src.splits?.[0]?.id || src.payments?.[0]?.ledgerId || '')
+            const targetAmt = src.totalAmount || src.amount || src.splits?.[0]?.amount || src.payments?.[0]?.amount || 0
             setRows([{ ledgerId: '', ledgerCollection: 'parties', amount: String(targetAmt), narration: '' }])
           } else {
-            setRows(v.payments.map(p => ({
-              ledgerId: p.ledgerId,
-              ledgerCollection: p.ledgerCollection,
-              amount: String(p.amount),
-              narration: p.narration || ''
-            })))
+            // Handle both QAPD format (payments[]) and ACCPRO format (rows[])
+            if (src.payments && Array.isArray(src.payments) && src.payments.length > 0) {
+              setRows(src.payments.map(p => ({
+                ledgerId: p.ledgerId || '',
+                ledgerCollection: p.ledgerCollection || 'parties',
+                amount: String(p.amount || 0),
+                narration: p.narration || ''
+              })))
+            } else if (src.rows && Array.isArray(src.rows) && src.rows.length > 0) {
+              // ACCPRO stores multi-receiver payments as rows[] with type: 'dr'/'cr'
+              const drRows = src.rows.filter(r => r.type === 'dr')
+              if (drRows.length > 0) {
+                setRows(drRows.map(r => ({
+                  ledgerId: r.id || '',
+                  ledgerCollection: 'parties',
+                  amount: String(r.amount || 0),
+                  narration: ''
+                })))
+              } else {
+                setRows(src.rows.map(r => ({
+                  ledgerId: r.id || '',
+                  ledgerCollection: 'parties',
+                  amount: String(r.amount || 0),
+                  narration: ''
+                })))
+              }
+            } else {
+              // Fallback: try splits or single party
+              const splitRows = src.splits && Array.isArray(src.splits) ? src.splits.filter(s => s.type === 'dr') : []
+              if (splitRows.length > 0) {
+                setRows(splitRows.map(s => ({
+                  ledgerId: s.targetId || '',
+                  ledgerCollection: 'parties',
+                  amount: String(s.amount || 0),
+                  narration: ''
+                })))
+              } else {
+                setRows([{ ledgerId: src.partyId || '', ledgerCollection: 'parties', amount: String(src.amount || 0), narration: '' }])
+              }
+            }
           }
         }
       } catch (err) {
