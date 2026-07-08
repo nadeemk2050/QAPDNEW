@@ -576,6 +576,22 @@ export async function getAccountLedger(accountId, params = {}) {
         }
 
         if (isMatch) {
+          // ── Compute per-split amount if account matched via payments/splits ──
+          let displayAmount = Number(data.totalAmount || data.amount || 0);
+          if (unifiedSplits && unifiedSplits.length > 0) {
+            let matchingSplit = unifiedSplits.find(s => s.targetId === accountId);
+            if (!matchingSplit && ledgerList) {
+              const activeLedger = ledgerList.find(l => l.id === accountId);
+              if (activeLedger) {
+                const activeNameLower = activeLedger.name.trim().toLowerCase();
+                matchingSplit = unifiedSplits.find(s => (s.targetName || '').trim().toLowerCase() === activeNameLower);
+              }
+            }
+            if (matchingSplit) {
+              displayAmount = matchingSplit.amount;
+            }
+          }
+
           const typeLower = (data.type || '').toLowerCase()
           const subType = (typeLower === 'out' || typeLower === 'payment') ? 'payment' : (typeLower === 'in' || typeLower === 'receipt') ? 'receipt' : typeLower === 'contra' ? 'contra' : typeLower || ''
           
@@ -637,7 +653,7 @@ export async function getAccountLedger(accountId, params = {}) {
             date: data.date || '',
             type: col,
             subType,
-            amount: Number(data.totalAmount || data.amount || 0),
+            amount: displayAmount,
             narration: data.narration || data.description || '',
             accountName: data.accountName || '',
             accountId: data.accountId || '',
