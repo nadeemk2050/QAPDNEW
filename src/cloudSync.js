@@ -10,7 +10,7 @@
  * Includes a self-write guard to prevent feedback loop with QAPD's own syncToCloud().
  */
 
-import { collection, query, onSnapshot } from '@firebase/firestore';
+import { collection, query, where, onSnapshot } from '@firebase/firestore';
 import { cloudDb } from './firebase';
 import { getDB } from './localDB';
 
@@ -91,7 +91,14 @@ export async function startCloudSync(companyId) {
 
   try {
     const recordsRef = collection(cloudDb, livePath);
-    const recordsQuery = query(recordsRef);
+    // ⬇️ Only watch collections QAPD actually uses — excludes system_logs & audit_logs (biggest read cost)
+    const recordsQuery = query(recordsRef,
+      where('collectionName', 'in', [
+        'payments', 'invoices', 'journal_vouchers', 'stock_journals',
+        'parties', 'accounts', 'ledgers', 'expenses',
+        'income_accounts', 'capital_accounts'
+      ])
+    );
     let processing = false;
 
     unsubscribe = onSnapshot(recordsQuery, async (snapshot) => {
