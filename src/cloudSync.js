@@ -101,14 +101,10 @@ export async function startCloudSync(companyId) {
 
   try {
     const recordsRef = collection(cloudDb, livePath);
-    // ⬇️ Only watch collections QAPD uses + only changes since last pull
-    const WATCHED_COLLECTIONS = [
-      'payments', 'invoices', 'journal_vouchers', 'stock_journals',
-      'parties', 'accounts', 'ledgers', 'expenses',
-      'income_accounts', 'capital_accounts'
-    ];
+    // ⬇️ Only pull changes since last sync — avoids re-reading all data
+    // No collectionName filter needed: client-side already skips system_logs/audit_logs,
+    // and syncTimestamp > now matches ZERO docs on first run (zero reads!)
     const recordsQuery = query(recordsRef,
-      where('collectionName', 'in', WATCHED_COLLECTIONS),
       where('syncTimestamp', '>', lastPullTs)
     );
     let processing = false;
