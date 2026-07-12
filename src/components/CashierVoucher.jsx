@@ -369,6 +369,7 @@ export default function CashierVoucher({ subUser }) {
               const ledgerInfo = ledgers.find(l => l.id === r.ledgerId)
               return {
                 ledgerId: r.ledgerId,
+                ledgerName: ledgerInfo?.name || getLedgerName(r.ledgerId) || 'Unknown',
                 ledgerCollection: ledgerInfo?.collection || 'parties',
                 amount: parseFloat(r.amount),
                 narration: r.narration || narration,
@@ -377,9 +378,15 @@ export default function CashierVoucher({ subUser }) {
             })
 
           const paymentType = type === 'receipt' ? 'in' : 'out'
+          const accName = getAccountName(accountId)
+          const firstPayName = payments.length > 0 ? payments[0].ledgerName : ''
           
           await updateVoucher(voucherId, {
             accountId,
+            accountName: accName,
+            crName: accName,
+            drName: firstPayName,
+            partyName: firstPayName,
             payments,
             date,
             narration,
