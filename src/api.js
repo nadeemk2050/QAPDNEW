@@ -299,25 +299,43 @@ export async function addPayment(data) {
 
   const payments = data.payments || []
   const isMulti = payments.length > 1
+  const isReceipt = data.type === 'in'
+  const cashBankName = data.accountName || ''
+
+  // Build highly compatible payments items with all expected keys (id, partyId, ledgerId)
+  const mappedPayments = payments.map(p => ({
+    id: p.ledgerId || p.id,
+    partyId: p.ledgerId || p.id,
+    ledgerId: p.ledgerId || p.id,
+    ledgerName: p.ledgerName || p.partyName || 'Unknown',
+    partyName: p.ledgerName || p.partyName || 'Unknown',
+    ledgerCollection: p.ledgerCollection || 'parties',
+    amount: parseFloat(p.amount) || 0,
+    narration: p.narration || data.narration || '',
+    category: 'normal'
+  }))
+
+  const firstPayment = mappedPayments[0]
 
   // Build rows array for ACCPRO compatibility (like journal rows)
   let rows = null
-  if (isMulti && payments.length > 0) {
-    rows = payments.map(p => ({
-      id: p.ledgerId || p.id,
-      amount: parseFloat(p.amount) || 0,
-      type: 'dr'
+  if (isMulti && mappedPayments.length > 0) {
+    rows = mappedPayments.map(p => ({
+      id: p.id,
+      amount: p.amount,
+      type: isReceipt ? 'cr' : 'dr'
     }));
-    // Add cash/bank as cr row
+    // Add cash/bank row
     rows.push({
       id: data.accountId || '',
       amount: totalAmount,
-      type: 'cr'
+      type: isReceipt ? 'dr' : 'cr'
     });
   }
 
   const docData = {
     ...data,
+    payments: mappedPayments,
     totalAmount,
     amount: totalAmount,
     rows,
@@ -325,9 +343,11 @@ export async function addPayment(data) {
     userId: companyId,
     createdAt: Date.now(),
     status: 'active',
-    // ACCPRO resolves party name via findName(partyId) — store the first ledger ID
-    partyId: data.partyId || (data.payments?.[0]?.ledgerId) || '',
-    partyName: data.partyName || (data.payments?.[0]?.ledgerName) || ''
+    // Set first receiver ID so ACCPRO Daybook displays a valid name instead of 'Unknown'
+    partyId: firstPayment ? firstPayment.id : '',
+    partyName: isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : ''),
+    drName: isReceipt ? cashBankName : (isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : '')),
+    crName: isReceipt ? (isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : '')) : cashBankName
   }
 
   // 1. Save to local RxDB via rxfs shim
@@ -341,48 +361,6 @@ export async function addPayment(data) {
   // 2. Push to cloud (real Firestore) for cross-device sync
   await syncToCloud(companyId, 'payments', voucherId, docData)
   markSelfSynced(companyId, voucherId)
-
-  // 3. For multi-receiver payments, sync INDIVIDUAL split docs per receiver
-  //    so ACCPRO's liveSync can post each receiver's amount to their account
-  if (isMulti && payments.length > 0) {
-    const baseData = { ...docData }
-
-    for (let i = 0; i < payments.length; i++) {
-      const p = payments[i]
-      // Use a clean UUID as split doc ID so ACCPRO treats it as a normal document
-      const splitId = crypto.randomUUID ? crypto.randomUUID() : `${voucherId}_s${i}`
-      const splitAmount = parseFloat(p.amount) || 0
-      const splitData = {
-        ...baseData,
-        // Include single-receiver payments array so ACCPRO can find party info
-        payments: [{
-          ledgerId: p.ledgerId || '',
-          ledgerName: p.ledgerName || '',
-          amount: splitAmount,
-          type: 'dr'
-        }],
-        rows: [{
-          id: p.ledgerId || '',
-          amount: splitAmount,
-          type: 'dr'
-        }, {
-          id: data.accountId || '',
-          amount: totalAmount,
-          type: 'cr'
-        }],
-        id: splitId,
-        parentVoucherId: voucherId,
-        partyId: p.ledgerId || '',
-        partyName: p.ledgerName || '',
-        amount: splitAmount,
-        totalAmount: splitAmount,
-        isSplit: true,
-        collectionName: 'payments'
-      }
-      await syncToCloud(companyId, 'payments', splitId, splitData)
-      markSelfSynced(companyId, splitId)
-    }
-  }
 
   return { success: true, id: voucherId }
 }
@@ -520,11 +498,50 @@ export async function updateVoucher(voucherId, data) {
     totalAmount = data.payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   }
 
-  // If payments were updated, also sync partyId/partyName from first payment
+  // If payments were updated, also sync partyId/partyName and rows
   if (data.payments && Array.isArray(data.payments) && data.payments.length > 0) {
-    data.partyId = data.payments[0].ledgerId || data.partyId || ''
-    data.partyName = data.payments[0].ledgerName || data.partyName || ''
-    data.drName = data.payments[0].ledgerName || data.drName || ''
+    const isMulti = data.payments.length > 1
+    data.isMulti = isMulti
+
+    // Build highly compatible payments items with all expected keys (id, partyId, ledgerId)
+    const mappedPayments = data.payments.map(p => ({
+      id: p.ledgerId || p.id,
+      partyId: p.ledgerId || p.id,
+      ledgerId: p.ledgerId || p.id,
+      ledgerName: p.ledgerName || p.partyName || 'Unknown',
+      partyName: p.ledgerName || p.partyName || 'Unknown',
+      ledgerCollection: p.ledgerCollection || 'parties',
+      amount: parseFloat(p.amount) || 0,
+      narration: p.narration || data.narration || '',
+      category: 'normal'
+    }))
+    
+    data.payments = mappedPayments
+    const firstPayment = mappedPayments[0]
+    
+    // Resolve receipt vs payment type dynamically
+    const isReceipt = data.type === 'in' || data.subType === 'in' || (oldVoucher && (oldVoucher.type === 'in' || oldVoucher.subType === 'in'))
+    const cashBankName = data.accountName || oldVoucher?.accountName || ''
+
+    data.partyId = firstPayment ? firstPayment.id : ''
+    data.partyName = isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : '')
+    data.drName = isReceipt ? cashBankName : (isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : ''))
+    data.crName = isReceipt ? (isMulti ? 'Multiple' : (firstPayment ? firstPayment.partyName : '')) : cashBankName
+
+    if (isMulti) {
+      data.rows = mappedPayments.map(p => ({
+        id: p.id,
+        amount: p.amount,
+        type: isReceipt ? 'cr' : 'dr'
+      }));
+      data.rows.push({
+        id: data.accountId || oldVoucher?.accountId || '',
+        amount: totalAmount,
+        type: isReceipt ? 'dr' : 'cr'
+      });
+    } else {
+      data.rows = null
+    }
   }
 
   const docRef = doc(db, colName, voucherId)
