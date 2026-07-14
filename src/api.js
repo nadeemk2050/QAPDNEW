@@ -317,6 +317,25 @@ export async function addPayment(data) {
 
   const firstPayment = mappedPayments[0]
 
+  // Helper to map collection names to ACCPRO categories
+  const getCategory = (col) => {
+    if (col === 'parties') return 'party'
+    if (col === 'expenses') return 'expense'
+    if (col === 'income_accounts') return 'income'
+    if (col === 'accounts') return 'account'
+    if (col === 'assets') return 'asset'
+    return col || 'party'
+  }
+
+  // Build splits array for ACCPRO compatibility
+  const splits = isMulti ? mappedPayments.map((p, idx) => ({
+    id: idx + 1,
+    category: getCategory(p.ledgerCollection),
+    targetId: p.id,
+    amount: p.amount,
+    description: p.narration || data.narration || ''
+  })) : null
+
   // Build rows array for ACCPRO compatibility (like journal rows)
   let rows = null
   if (isMulti && mappedPayments.length > 0) {
@@ -350,6 +369,7 @@ export async function addPayment(data) {
   const docData = {
     ...data,
     payments: mappedPayments,
+    splits,
     totalAmount,
     amount: totalAmount,
     rows,
@@ -532,6 +552,27 @@ export async function updateVoucher(voucherId, data) {
     
     data.payments = mappedPayments
     const firstPayment = mappedPayments[0]
+
+    // Helper to map collection names to ACCPRO categories
+    const getCategory = (col) => {
+      if (col === 'parties') return 'party'
+      if (col === 'expenses') return 'expense'
+      if (col === 'income_accounts') return 'income'
+      if (col === 'accounts') return 'account'
+      if (col === 'assets') return 'asset'
+      return col || 'party'
+    }
+
+    // Build splits array for ACCPRO compatibility
+    const splits = isMulti ? mappedPayments.map((p, idx) => ({
+      id: idx + 1,
+      category: getCategory(p.ledgerCollection),
+      targetId: p.id,
+      amount: p.amount,
+      description: p.narration || data.narration || ''
+    })) : null
+
+    data.splits = splits
     
     // Resolve receipt vs payment type dynamically
     const isReceipt = data.type === 'in' || data.subType === 'in' || (oldVoucher && (oldVoucher.type === 'in' || oldVoucher.subType === 'in'))
