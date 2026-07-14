@@ -322,14 +322,28 @@ export async function addPayment(data) {
   if (isMulti && mappedPayments.length > 0) {
     rows = mappedPayments.map(p => ({
       id: p.id,
+      ledgerId: p.id,
+      partyId: p.id,
+      name: p.ledgerName,
+      ledgerName: p.ledgerName,
+      partyName: p.ledgerName,
+      ledgerCollection: p.ledgerCollection,
       amount: p.amount,
-      type: isReceipt ? 'cr' : 'dr'
+      type: isReceipt ? 'cr' : 'dr',
+      narration: p.narration
     }));
     // Add cash/bank row
     rows.push({
       id: data.accountId || '',
+      ledgerId: data.accountId || '',
+      partyId: data.accountId || '',
+      name: cashBankName,
+      ledgerName: cashBankName,
+      partyName: cashBankName,
+      ledgerCollection: 'accounts',
       amount: totalAmount,
-      type: isReceipt ? 'dr' : 'cr'
+      type: isReceipt ? 'dr' : 'cr',
+      narration: data.narration || ''
     });
   }
 
@@ -531,13 +545,27 @@ export async function updateVoucher(voucherId, data) {
     if (isMulti) {
       data.rows = mappedPayments.map(p => ({
         id: p.id,
+        ledgerId: p.id,
+        partyId: p.id,
+        name: p.ledgerName,
+        ledgerName: p.ledgerName,
+        partyName: p.ledgerName,
+        ledgerCollection: p.ledgerCollection,
         amount: p.amount,
-        type: isReceipt ? 'cr' : 'dr'
+        type: isReceipt ? 'cr' : 'dr',
+        narration: p.narration
       }));
       data.rows.push({
         id: data.accountId || oldVoucher?.accountId || '',
+        ledgerId: data.accountId || oldVoucher?.accountId || '',
+        partyId: data.accountId || oldVoucher?.accountId || '',
+        name: cashBankName,
+        ledgerName: cashBankName,
+        partyName: cashBankName,
+        ledgerCollection: 'accounts',
         amount: totalAmount,
-        type: isReceipt ? 'dr' : 'cr'
+        type: isReceipt ? 'dr' : 'cr',
+        narration: data.narration || ''
       });
     } else {
       data.rows = null
