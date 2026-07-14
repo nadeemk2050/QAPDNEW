@@ -1,7 +1,7 @@
 {
   "name": "quickaccpro",
   "private": true,
-  "version": "1.6.0",
+  "version": "1.7.0",
   "type": "module",
   "description": "QuickAccPro — Lightweight companion app for AccountsPro",
   "scripts": {

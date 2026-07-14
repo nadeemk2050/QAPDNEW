@@ -140,7 +140,7 @@ export default function Layout({ company, subUser, onLogout, children }) {
               </div>
               <div className="min-w-0">
                 <h1 className="text-sm font-bold tracking-tight">
-                  QuickAccPro <span className="text-[9px] bg-indigo-500/50 text-indigo-100 px-1 py-0.5 rounded font-mono ml-1">v1.6</span>
+                  QuickAccPro <span className="text-[9px] bg-indigo-500/50 text-indigo-100 px-1 py-0.5 rounded font-mono ml-1">v1.7</span>
                 </h1>
                 {company && (
                   <p className="text-[10px] text-indigo-300 truncate max-w-[120px]">{company.name}</p>
